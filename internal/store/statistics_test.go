@@ -35,7 +35,7 @@ func TestStatisticsSurviveDashboardPrune(t *testing.T) {
 	start := now.Add(time.Minute)
 	end := start.Add(2 * time.Minute)
 	r := Run{Repository: "org/a", ID: 1, Attempt: 1, Name: "Build", Path: ".github/workflows/build.yml", Status: "completed", Conclusion: "failure", CreatedAt: now, UpdatedAt: end, StartedAt: &start, CompletedAt: &end}
-	j := Job{Repository: r.Repository, RunID: 1, Attempt: 1, ID: 2, WorkflowName: "Build", RunnerName: "worker-1", Status: "completed", Conclusion: "failure", CreatedAt: now, UpdatedAt: end, StartedAt: &start, CompletedAt: &end}
+	j := Job{Repository: r.Repository, RunID: 1, Attempt: 1, ID: 2, WorkflowName: "Build", RunnerName: "worker-1", Labels: []string{"ubuntu-latest"}, Status: "completed", Conclusion: "failure", CreatedAt: now, UpdatedAt: end, StartedAt: &start, CompletedAt: &end}
 	for _, e := range []events.Event{{DeliveryID: "stats-run", Run: &r}, {DeliveryID: "stats-job", Job: &j}} {
 		if err := s.Apply(ctx, e); err != nil {
 			t.Fatal(err)
@@ -56,7 +56,22 @@ func TestStatisticsSurviveDashboardPrune(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(stats.Workers) != 1 || stats.Workers[0].Failed != 1 || stats.Workers[0].AverageDuration() != "2m0s" || len(stats.Workflows) != 1 || stats.Workflows[0].Failed != 1 {
+	if len(stats.Workers) != 1 || stats.Workers[0].Name != "ubuntu-latest" || stats.Workers[0].Failed != 1 || stats.Workers[0].AverageDuration() != "2m0s" || len(stats.Workflows) != 1 || stats.Workflows[0].Failed != 1 {
 		t.Fatalf("lost statistics: %+v", stats)
+	}
+}
+
+func TestWorkerTypeName(t *testing.T) {
+	for _, test := range []struct {
+		labels []string
+		want   string
+	}{
+		{[]string{"ubuntu-latest"}, "ubuntu-latest"},
+		{[]string{"self-hosted", "linux", "ARM64", "linux", ""}, "ARM64, linux, self-hosted"},
+		{nil, "Unreported"}, {[]string{""}, "Unreported"},
+	} {
+		if got := WorkerTypeName(test.labels); got != test.want {
+			t.Fatalf("got %q want %q", got, test.want)
+		}
 	}
 }

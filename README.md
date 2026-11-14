@@ -40,15 +40,20 @@ choose bucket sizes automatically (hourly for 24 hours, six-hourly for 7 days,
 daily for 30 days, and three-day buckets for 90 days). All-history buckets adapt
 to the observed span. Empty failure-rate buckets are zero-filled.
 
-Repository, workflow, and worker filters update the snapshot when changed;
+Repository, workflow, and runner type filters update the snapshot when changed;
 searchable suggestions support larger organizations. Breakdown tabs show a
 single-column list with the same six numbers in four aligned mini graphs per group.
+Runner types group by the sorted, deduplicated requested runner labels (for
+example `ubuntu-latest`), matching the live dashboard. Assigned ephemeral runner
+names are not grouping or filter keys. Historical labels are already persisted,
+so this grouping applies to existing facts without a schema change. Jobs without
+labels appear as `Unreported`, including when a runner name is present.
 Lists support search, sorting, and pagination with ten rows per page. Main graphs
 always summarize all matching jobs, independently of list search and pagination,
 using aggregate series instead of hundreds of overlapping group series.
 Filters, search, sorting, and pagination are preserved in URLs.
 
-All historical metrics use observed jobs, so worker filters consistently scope
+All historical metrics use observed jobs, so runner type filters consistently scope
 counts and timings. Time frames select jobs by creation time in UTC; the parent
 run supplies workflow file identity where available. Total execution time sums
 valid completed job durations, including parallel jobs. Queue averages and P95 exclude

@@ -214,7 +214,7 @@ func (s *statsSource) Statistics(context.Context, string) (store.Statistics, err
 	now := time.Now()
 	start := now.Add(-time.Minute)
 	end := now
-	return store.Statistics{UpdatedAt: now, Since: now.Add(-24 * time.Hour), Runs: []store.Run{{Repository: "org/repo", ID: 1, Attempt: 1, Name: "Build", Status: "completed", Conclusion: "failure", CreatedAt: start, StartedAt: &start, CompletedAt: &end}}, Jobs: []store.Job{{Repository: "org/repo", RunID: 1, Attempt: 1, RunnerName: "<runner>", Status: "completed", Conclusion: "failure", CreatedAt: start, StartedAt: &start, CompletedAt: &end}}}, nil
+	return store.Statistics{UpdatedAt: now, Since: now.Add(-24 * time.Hour), Runs: []store.Run{{Repository: "org/repo", ID: 1, Attempt: 1, Name: "Build", Status: "completed", Conclusion: "failure", CreatedAt: start, StartedAt: &start, CompletedAt: &end}}, Jobs: []store.Job{{Repository: "org/repo", RunID: 1, Attempt: 1, RunnerName: "<runner>", Labels: []string{"<runner>"}, Status: "completed", Conclusion: "failure", CreatedAt: start, StartedAt: &start, CompletedAt: &end}}}, nil
 }
 func TestStatisticsPageIsStaticAndEscaped(t *testing.T) {
 	s := New(&statsSource{}, "test", "Organization")

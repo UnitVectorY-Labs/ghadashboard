@@ -20,7 +20,7 @@ func TestStatisticsFiltersAndTrendBuckets(t *testing.T) {
 		{Repository: "org/a", ID: 3, Attempt: 1, Path: ".github/workflows/deploy.yml", Status: "queued", CreatedAt: start},
 		{Repository: "org/a", ID: 4, Attempt: 1, Path: ".github/workflows/ci.yml", Status: "completed", Conclusion: "success", CreatedAt: now.Add(-48 * time.Hour)},
 	}
-	stats := store.Statistics{UpdatedAt: now, Since: now.Add(-72 * time.Hour), Runs: runs, Jobs: []store.Job{{Repository: "org/a", RunID: 1, Attempt: 1, RunnerName: "worker", CreatedAt: start, StartedAt: &start, CompletedAt: &end, Status: "completed", Conclusion: "failure"}, {Repository: "org/b", RunID: 2, Attempt: 1, RunnerName: "other", CreatedAt: start}}}
+	stats := store.Statistics{UpdatedAt: now, Since: now.Add(-72 * time.Hour), Runs: runs, Jobs: []store.Job{{Repository: "org/a", RunID: 1, Attempt: 1, RunnerName: "worker", Labels: []string{"worker"}, CreatedAt: start, StartedAt: &start, CompletedAt: &end, Status: "completed", Conclusion: "failure"}, {Repository: "org/b", RunID: 2, Attempt: 1, RunnerName: "other", Labels: []string{"other"}, CreatedAt: start}}}
 	p := buildStatsPage(stats, "org/a", ".github/workflows/ci.yml", "24h", "workers")
 	if p.Summary.Total != 1 || p.Jobs != 1 || p.Summary.FailureRate() != "100.0%" || p.Summary.AverageDuration() != "5m0s" || len(p.Groups) != 1 || p.Groups[0].Name != "worker" {
 		t.Fatalf("incorrect filter/summary: %+v", p)
@@ -73,9 +73,9 @@ func TestWorkerFilterScopesEveryMetricAndPreservesControls(t *testing.T) {
 	start := created.Add(time.Minute)
 	end := start.Add(10 * time.Minute)
 	stats := store.Statistics{UpdatedAt: now, Since: created, Jobs: []store.Job{
-		{Repository: "org/a", RunID: 1, Attempt: 1, WorkflowName: "CI", RunnerName: "linux", CreatedAt: created, StartedAt: &start, CompletedAt: &end, Status: "completed", Conclusion: "failure"},
-		{Repository: "org/a", RunID: 1, Attempt: 1, WorkflowName: "CI", RunnerName: "mac", CreatedAt: created, StartedAt: &start, CompletedAt: &end, Status: "completed", Conclusion: "success"},
-		{Repository: "org/b", RunID: 2, Attempt: 1, WorkflowName: "CI", RunnerName: "linux", CreatedAt: created, Status: "queued"},
+		{Repository: "org/a", RunID: 1, Attempt: 1, WorkflowName: "CI", RunnerName: "linux", Labels: []string{"linux"}, CreatedAt: created, StartedAt: &start, CompletedAt: &end, Status: "completed", Conclusion: "failure"},
+		{Repository: "org/a", RunID: 1, Attempt: 1, WorkflowName: "CI", RunnerName: "mac", Labels: []string{"mac"}, CreatedAt: created, StartedAt: &start, CompletedAt: &end, Status: "completed", Conclusion: "success"},
+		{Repository: "org/b", RunID: 2, Attempt: 1, WorkflowName: "CI", RunnerName: "linux", Labels: []string{"linux"}, CreatedAt: created, Status: "queued"},
 	}}
 	p := buildStatsPageWithList(stats, "org/a", "CI", "linux", "7d", "workers", "", "runs", 1)
 	if p.Summary.Total != 1 || p.Summary.Failed != 1 || p.Summary.Duration != 10*time.Minute || p.Summary.QueueTime != time.Minute || p.WorkflowRuns != 1 {
@@ -101,7 +101,7 @@ func TestLargeBreakdownListAndAggregateGraph(t *testing.T) {
 	for i := 0; i < 250; i++ {
 		start := created
 		end := start.Add(time.Minute)
-		stats.Jobs = append(stats.Jobs, store.Job{Repository: fmt.Sprintf("org/repo-%03d", i), RunID: int64(i), WorkflowName: "CI", RunnerName: "worker", CreatedAt: created, StartedAt: &start, CompletedAt: &end, Status: "completed", Conclusion: "success"})
+		stats.Jobs = append(stats.Jobs, store.Job{Repository: fmt.Sprintf("org/repo-%03d", i), RunID: int64(i), WorkflowName: "CI", RunnerName: "worker", Labels: []string{"worker"}, CreatedAt: created, StartedAt: &start, CompletedAt: &end, Status: "completed", Conclusion: "success"})
 	}
 	p := buildStatsPageWithList(stats, "", "", "", "24h", "repositories", "", "runs", 2)
 	if p.GroupCount != 250 || len(p.Rows) != 10 || p.Pages != 25 || p.Page != 2 || p.Rows[0].Name != "org/repo-010" {
@@ -204,7 +204,7 @@ func TestQueuePercentileUsesRawSamplesAndFilters(t *testing.T) {
 			start = created.Add(100 * time.Second)
 			worker = "slow"
 		}
-		stats.Jobs = append(stats.Jobs, store.Job{Repository: "org/repo", RunnerName: worker, CreatedAt: created, StartedAt: &start, Status: "in_progress"})
+		stats.Jobs = append(stats.Jobs, store.Job{Repository: "org/repo", RunnerName: worker, Labels: []string{worker}, CreatedAt: created, StartedAt: &start, Status: "in_progress"})
 	}
 	p := buildStatsPage(stats, "", "", "24h", "workers")
 	if p.QueueP95 != "1s" {
@@ -234,5 +234,44 @@ func TestQueuePercentileUsesRawSamplesAndFilters(t *testing.T) {
 		if got := percentile95(test.samples); got != test.want {
 			t.Fatalf("p95 got %v want %v", got, test.want)
 		}
+	}
+}
+
+func TestRunnerTypesGroupHistoricalJobsAndScopeFilters(t *testing.T) {
+	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	created := now.Add(-time.Hour)
+	start := created.Add(time.Minute)
+	end := start.Add(5 * time.Minute)
+	stats := store.Statistics{UpdatedAt: now, Since: created, Jobs: []store.Job{
+		{Repository: "org/a", RunID: 1, RunnerName: "GitHub Actions 10001", Labels: []string{"ubuntu-latest"}, CreatedAt: created, StartedAt: &start, CompletedAt: &end, Status: "completed", Conclusion: "success"},
+		{Repository: "org/b", RunID: 2, RunnerName: "GitHub Actions 10002", Labels: []string{"ubuntu-latest", "ubuntu-latest", ""}, CreatedAt: created, StartedAt: &start, CompletedAt: &end, Status: "completed", Conclusion: "failure"},
+		{Repository: "org/a", RunID: 3, Labels: []string{"ubuntu-latest"}, CreatedAt: created, Status: "queued"},
+		{Repository: "org/a", RunID: 4, RunnerName: "ephemeral-1", Labels: []string{"self-hosted", "linux", "ARM64"}, CreatedAt: created, Status: "queued"},
+		{Repository: "org/a", RunID: 5, RunnerName: "ephemeral-2", Labels: []string{"ARM64", "linux", "self-hosted", "linux"}, CreatedAt: created, Status: "queued"},
+		{Repository: "org/a", RunID: 6, RunnerName: "host-without-labels", CreatedAt: created, Status: "queued"},
+	}}
+	p := buildStatsPage(stats, "", "", "24h", "workers")
+	if len(p.Groups) != 3 || len(p.Workers) != 3 {
+		t.Fatalf("ephemeral names split types: %+v", p.Groups)
+	}
+	if strings.Join(p.Workers, "|") != "ARM64, linux, self-hosted|Unreported|ubuntu-latest" {
+		t.Fatalf("wrong types: %v", p.Workers)
+	}
+	filtered := buildStatsPageWithList(stats, "", "", "ubuntu-latest", "24h", "workers", "", "runs", 1)
+	if filtered.Summary.Total != 3 || filtered.Summary.Failed != 1 || filtered.Summary.Queued != 1 || filtered.Summary.Duration != 10*time.Minute || filtered.Summary.AverageQueue() != "1m0s" || filtered.QueueP95 != "1m0s" {
+		t.Fatalf("type filter missed jobs/timings: %+v", filtered.Summary)
+	}
+	if len(filtered.Rows) != 1 || filtered.Rows[0].Name != "ubuntu-latest" {
+		t.Fatal("wrong type breakdown")
+	}
+	if !strings.Contains(filtered.DrillURL("ubuntu-latest"), "worker=ubuntu-latest") {
+		t.Fatal("drilldown uses host identity")
+	}
+	var chart struct{ Metrics map[string][][]any }
+	if err := json.Unmarshal([]byte(filtered.Chart), &chart); err != nil {
+		t.Fatal(err)
+	}
+	if chart.Metrics["runs"][0][23] != float64(3) || chart.Metrics["errors"][0][23] != float64(1) || chart.Metrics["execution"][0][23] != float64(10) {
+		t.Fatal("graphs not scoped to runner type")
 	}
 }

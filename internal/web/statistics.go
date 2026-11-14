@@ -172,10 +172,7 @@ func buildStatsPageWithList(stats store.Statistics, repo, workflow, worker, peri
 		if workflowName == "" {
 			workflowName = "Unreported workflow"
 		}
-		workerName := j.RunnerName
-		if workerName == "" {
-			workerName = "Unassigned / unreported"
-		}
+		workerName := store.WorkerTypeName(j.Labels)
 		repos[j.Repository] = true
 		if repo == "" || repo == j.Repository {
 			workflows[workflowName] = true

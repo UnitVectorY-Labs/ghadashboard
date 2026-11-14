@@ -323,10 +323,7 @@ FROM current_state r WHERE status<>'completed' OR (event_time >= $2 AND run_id=n
 				key, _ := json.Marshal(labels)
 				worker := workerTypes[string(key)]
 				if worker == nil {
-					name := strings.Join(labels, ", ")
-					if name == "" {
-						name = "Unreported"
-					}
+					name := WorkerTypeName(labels)
 					worker = &WorkerType{Name: name, Labels: labels}
 					workerTypes[string(key)] = worker
 				}
@@ -357,6 +354,16 @@ FROM current_state r WHERE status<>'completed' OR (event_time >= $2 AND run_id=n
 		return out.WorkerTypes[i].Name < out.WorkerTypes[j].Name
 	})
 	return out, tx.Commit(ctx)
+}
+
+// WorkerTypeName identifies requested runner capacity, not an ephemeral host.
+// Use the same canonical label grouping in live state and historical statistics.
+func WorkerTypeName(labels []string) string {
+	name := strings.Join(canonicalLabels(labels), ", ")
+	if name == "" {
+		return "Unreported"
+	}
+	return name
 }
 
 func canonicalLabels(labels []string) []string {

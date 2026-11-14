@@ -108,10 +108,7 @@ func (s *Store) Statistics(ctx context.Context, repo string) (Statistics, error)
 			out.Since = j.CreatedAt
 		}
 		out.Jobs = append(out.Jobs, j)
-		worker := j.RunnerName
-		if worker == "" {
-			worker = "Unassigned / unreported"
-		}
+		worker := WorkerTypeName(j.Labels)
 		addStatistic(workers, worker, j.Status, j.Conclusion, j.CreatedAt, j.StartedAt, j.CompletedAt)
 		addStatistic(jobRepos, j.Repository, j.Status, j.Conclusion, j.CreatedAt, j.StartedAt, j.CompletedAt)
 		name := j.WorkflowName
