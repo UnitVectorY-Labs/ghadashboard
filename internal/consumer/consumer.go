@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/pubsub"
@@ -23,10 +24,15 @@ func Run(ctx context.Context, database *store.Store, project, subscription strin
 	defer client.Close()
 	sub := client.Subscription(subscription)
 	sub.ReceiveSettings.NumGoroutines = 1
-	sub.ReceiveSettings.MaxOutstandingMessages = 1
+	sub.ReceiveSettings.MaxOutstandingMessages = 8
 	sub.ReceiveSettings.MaxOutstandingBytes = 32 << 20
+	// Keep one decompression workspace while allowing database commits and
+	// acknowledgement delivery to overlap across independent messages.
+	var decodeMu sync.Mutex
 	return sub.Receive(ctx, func(ctx context.Context, message *pubsub.Message) {
+		decodeMu.Lock()
 		event, err := events.Decode(message.Data, message.Attributes, message.PublishTime)
+		decodeMu.Unlock()
 		if err != nil {
 			// Invalid deliveries are retained for recovery; operators can correct
 			// the receiver/configuration or add a dead-letter policy as needed.

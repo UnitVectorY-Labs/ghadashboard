@@ -13,7 +13,7 @@ flowchart LR
     B -.->|30-second fallback refresh| W
 ```
 
-The consumer reads workflow events already published to a configured Pub/Sub subscription. It handles `workflow_run` and `workflow_job` deliveries, deduplicates delivery IDs, and applies ordered state updates transactionally. Job-only deliveries can create provisional run rows until an authoritative workflow event arrives. The system observes webhook activity; it does not fetch historical runs or query GitHub to reconcile missed deliveries. A missed event can therefore leave a run's displayed state stale.
+The consumer reads workflow events already published to a configured Pub/Sub subscription. It allows eight in-flight messages while serializing payload decoding to bound transient memory, and acknowledges each message only after its database transaction commits. It handles `workflow_run` and `workflow_job` deliveries, deduplicates delivery IDs, and applies ordered state updates transactionally. Job-only deliveries can create provisional run rows until an authoritative workflow event arrives. The system observes webhook activity; it does not fetch historical runs or query GitHub to reconcile missed deliveries. A missed event can therefore leave a run's displayed state stale.
 
 PostgreSQL stores each run attempt and its job details. The dashboard displays only the latest attempt for each repository and workflow run, includes job and step details inline, and retains completed history for seven days. Active work is kept visible even if it becomes stale. The consumer periodically removes expired completed runs and old delivery-deduplication records.
 

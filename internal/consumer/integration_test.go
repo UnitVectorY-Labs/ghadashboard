@@ -112,6 +112,30 @@ func TestSubscriberRetriesThenAcknowledgesCommittedState(t *testing.T) {
 	if snapshot.Failed != 1 || len(snapshot.Runs) != 1 || snapshot.Runs[0].ID != 101 || snapshot.Runs[0].Repository != "org/repo" || snapshot.Runs[0].Actor != "author" {
 		t.Fatalf("ACK without expected durable state: %+v", snapshot)
 	}
+	// A merge batch must drain before the same overall deadline, including
+	// the initial database-recovery retry. A single outstanding delivery waits
+	// for acknowledgement flushes serially and cannot keep up with this batch.
+	batchStarted := time.Now()
+	batchIDs := make([]string, 32)
+	compressed := encoder.EncodeAll(payload, nil)
+	for i := range batchIDs {
+		batchIDs[i] = emulator.Publish(topic.String(), compressed, map[string]string{
+			"gh_event": "workflow_run", "gh_delivery": fmt.Sprintf("integration-batch-%d", i), "compression": "zstd",
+		})
+	}
+	wait("subscriber failed to acknowledge merge batch before deadline", func() bool {
+		for _, batchID := range batchIDs {
+			if message := emulator.Message(batchID); message == nil || message.Acks == 0 {
+				return false
+			}
+		}
+		return true
+	})
+	batchElapsed := time.Since(batchStarted)
+	if batchElapsed > 5*time.Second {
+		t.Fatalf("32-event merge batch took %s; expected acknowledgement within 5 seconds", batchElapsed)
+	}
+	t.Logf("acknowledged 32-event merge batch in %s", batchElapsed)
 	badID := emulator.Publish(topic.String(), []byte("invalid-secret-body"), map[string]string{"gh_event": "workflow_run"})
 	wait("invalid payload was not retried", func() bool {
 		m := emulator.Message(badID)
