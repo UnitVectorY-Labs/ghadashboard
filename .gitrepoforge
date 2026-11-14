@@ -1,0 +1,14 @@
+name: ghadashboard
+default_branch: main
+config:
+  description: "Real-time visibility into GitHub Actions across repositories."
+  license: MIT
+  language: go
+  release: docker-go
+  release_github: false
+  status: wip
+  justfile: false
+  codecov:
+    enabled: false
+  docs:
+    enabled: true
