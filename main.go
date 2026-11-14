@@ -20,10 +20,10 @@ import (
 
 var Version = "dev"
 
-type config struct{ Mode, DatabaseURL, Address, Project, Subscription string }
+type config struct{ Mode, DatabaseURL, Address, Project, Subscription, Organization string }
 
 func loadConfig() (config, error) {
-	c := config{Mode: env("GHA_DASHBOARD_MODE", "web"), DatabaseURL: os.Getenv("DATABASE_URL"), Address: env("HTTP_ADDR", ":8080"), Project: os.Getenv("PUBSUB_PROJECT_ID"), Subscription: os.Getenv("PUBSUB_SUBSCRIPTION_ID")}
+	c := config{Organization: os.Getenv("GHA_DASHBOARD_ORGANIZATION"), Mode: env("GHA_DASHBOARD_MODE", "web"), DatabaseURL: os.Getenv("DATABASE_URL"), Address: env("HTTP_ADDR", ":8080"), Project: os.Getenv("PUBSUB_PROJECT_ID"), Subscription: os.Getenv("PUBSUB_SUBSCRIPTION_ID")}
 	if c.Mode != "web" && c.Mode != "consumer" && c.Mode != "migrate" {
 		return c, errors.New("GHA_DASHBOARD_MODE must be web, consumer, or migrate")
 	}
@@ -102,7 +102,7 @@ func run() error {
 		}()
 	}
 	if cfg.Mode == "web" {
-		dashboard := web.New(database, Version)
+		dashboard := web.New(database, Version, cfg.Organization)
 		mux.Handle("/", dashboard.Handler(Version))
 		startWorker(func() { errorsCh <- dashboard.Run(ctx) })
 	} else {

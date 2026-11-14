@@ -40,14 +40,14 @@ func TestDashboardRenderingAndFiltering(t *testing.T) {
 		{ID: 101, Attempt: 1, Repository: "org/repo", Name: "<script>alert(1)</script>", Status: "in_progress", CreatedAt: now, HTMLURL: "javascript:alert(1)", Jobs: []store.Job{{Name: "build", Status: "queued", StartedAt: &now}}},
 		{ID: 102, Attempt: 2, Repository: "org/repo", Name: "Failed run", Status: "completed", Conclusion: "failure", CreatedAt: now},
 	}}}
-	s := New(src, "test-version")
+	s := New(src, "test-version", "Test Organization")
 	w := httptest.NewRecorder()
 	s.Handler("test-version").ServeHTTP(w, httptest.NewRequest("GET", "/?repo=org%2Frepo", nil))
 	body := w.Body.String()
 	if w.Code != 200 {
 		t.Fatalf("render %d: %s", w.Code, body)
 	}
-	for _, want := range []string{"&lt;script&gt;alert(1)&lt;/script&gt;", "Failed run", "run-101-1", "test-version", "selected", "ubuntu-latest", "run-modal", `"includeIndicatorStyles":false`} {
+	for _, want := range []string{"&lt;script&gt;alert(1)&lt;/script&gt;", "Failed run", "run-101-1", "test-version", "GitHub Actions Dashboard", "Test Organization", "https://github.com/UnitVectorY-Labs/ghadashboard", `aria-pressed="true"`, "ubuntu-latest", "run-modal", `"includeIndicatorStyles":false`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}
@@ -74,7 +74,7 @@ func TestDashboardRenderingAndFiltering(t *testing.T) {
 	}
 }
 func TestUnavailableDoesNotExposeError(t *testing.T) {
-	s := New(&fakeSource{err: errors.New("postgres://secret@db")}, "v")
+	s := New(&fakeSource{err: errors.New("postgres://secret@db")}, "v", "Test Organization")
 	w := httptest.NewRecorder()
 	s.Handler("v").ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
 	if w.Code != 503 || strings.Contains(w.Body.String(), "secret") {
@@ -83,7 +83,7 @@ func TestUnavailableDoesNotExposeError(t *testing.T) {
 }
 func TestEventStreamPushesRenderedFilteredContent(t *testing.T) {
 	src := &fakeSource{snapshot: store.Snapshot{UpdatedAt: time.Now(), Repositories: []string{"org/repo"}}}
-	s := New(src, "v")
+	s := New(src, "v", "Test Organization")
 	server := httptest.NewServer(s.Handler("v"))
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
@@ -148,7 +148,7 @@ func TestEventStreamPushesRenderedFilteredContent(t *testing.T) {
 	t.Fatal("stream subscription leaked")
 }
 func TestAssetsAndURLs(t *testing.T) {
-	s := New(&fakeSource{}, "v")
+	s := New(&fakeSource{}, "v", "Test Organization")
 	for _, path := range []string{"/static/htmx.min.js", "/static/style.css", "/static/app.js"} {
 		w := httptest.NewRecorder()
 		s.Handler("v").ServeHTTP(w, httptest.NewRequest("GET", path, nil))
@@ -187,7 +187,7 @@ func TestDashboardRunOrdering(t *testing.T) {
 			if status == "in_progress" {
 				want = []int{1, 3, 2}
 			}
-			server := New(&fakeSource{snapshot: store.Snapshot{UpdatedAt: now, Runs: runs}}, "v")
+			server := New(&fakeSource{snapshot: store.Snapshot{UpdatedAt: now, Runs: runs}}, "v", "Test Organization")
 			// Both initial pages and the fragment used for live updates share this ordering.
 			for _, path := range []string{"/", "/dashboard"} {
 				w := httptest.NewRecorder()

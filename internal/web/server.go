@@ -28,18 +28,19 @@ type Source interface {
 	Listen(context.Context, func()) error
 }
 type Server struct {
-	source    Source
-	templates *template.Template
-	mu        sync.Mutex
-	clients   map[chan struct{}]struct{}
+	organization string
+	source       Source
+	templates    *template.Template
+	mu           sync.Mutex
+	clients      map[chan struct{}]struct{}
 }
 type page struct {
 	Snapshot                           store.Snapshot
-	Repo, Version                      string
+	Repo, Version, Organization        string
 	Running, Queued, Failed, Completed []store.Run
 }
 
-func New(source Source, version string) *Server {
+func New(source Source, version, organization string) *Server {
 	funcs := template.FuncMap{
 		"safeURL": SafeGitHubURL,
 		"stamp":   func(t time.Time) string { return t.UTC().Format("Jan 02, 15:04:05 UTC") },
@@ -84,7 +85,7 @@ func New(source Source, version string) *Server {
 			return fmt.Sprintf("%d/%d jobs done", done, len(jobs))
 		},
 	}
-	return &Server{source: source, templates: template.Must(template.New("dashboard").Funcs(funcs).ParseFS(assets, "templates.html")), clients: make(map[chan struct{}]struct{})}
+	return &Server{organization: organization, source: source, templates: template.Must(template.New("dashboard").Funcs(funcs).ParseFS(assets, "templates.html")), clients: make(map[chan struct{}]struct{})}
 }
 func (s *Server) Handler(version string) http.Handler {
 	mux := http.NewServeMux()
@@ -120,7 +121,7 @@ func (s *Server) load(ctx context.Context, repo, version string) (page, error) {
 	if err != nil {
 		return page{}, err
 	}
-	p := page{Snapshot: snap, Repo: repo, Version: version}
+	p := page{Snapshot: snap, Repo: repo, Version: version, Organization: s.organization}
 	for _, run := range snap.Runs {
 		switch {
 		case run.Status == "in_progress":

@@ -1,16 +1,81 @@
-{{define "page"}}<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false}'><title>Actions · UnitVectorY Labs</title><link rel="stylesheet" href="/static/style.css"><script src="/static/htmx.min.js" defer></script><script src="/static/app.js" defer></script></head>
-<body><div class="shell"><header><a class="brand" href="/">Actions <span>UnitVectorY Labs</span></a><div class="live-status"><span id="connection" role="status">Connecting</span><span id="updated"></span></div></header>
-<form class="toolbar" action="/" method="get"><label for="repository">Repository</label><select id="repository" name="repo"><option value="">All repositories</option>{{range .Snapshot.Repositories}}<option value="{{.}}" {{if eq . $.Repo}}selected{{end}}>{{.}}</option>{{end}}</select><noscript><button>Filter</button></noscript><span class="toolbar-note">Select a card for run and job details</span></form>
+{{define "page"}}<!doctype html><html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false}'><title>GitHub Actions Dashboard{{if .Organization}} · {{.Organization}}{{end}}</title><script src="/static/theme.js"></script><link rel="stylesheet" href="/static/style.css"><script src="/static/htmx.min.js" defer></script><script src="/static/app.js" defer></script></head>
+<body><div class="shell"><header><span class="connection-indicator tooltip-anchor" tabindex="0" aria-describedby="connection-tip"><span id="connection" role="status" aria-label="Connecting" data-state="connecting"></span><span class="tooltip" id="connection-tip" role="tooltip">Connecting</span></span><a class="brand" href="/"><span class="brand-title">{{template "icon-workflow"}}GitHub Actions Dashboard</span>{{if .Organization}}<span class="brand-subtitle">{{.Organization}}</span>{{end}}</a><div class="header-controls"><button type="button" id="theme-toggle" class="theme-toggle" aria-label="Switch to light mode"><span class="theme-sun">{{template "icon-sun"}}</span><span class="theme-moon">{{template "icon-moon"}}</span><span data-theme-label>Light mode</span></button></div></header>
+<form class="toolbar" action="/" method="get"><input type="hidden" id="repository" name="repo" value="{{.Repo}}"><details class="repo-picker" id="repo-picker"><summary id="repo-picker-label">{{if .Repo}}{{.Repo}}{{else}}All repositories{{end}}<span aria-hidden="true">⌄</span></summary><div class="repo-menu"><label class="sr-only" for="repo-search">Search repositories</label><input type="search" id="repo-search" placeholder="Find a repository…" autocomplete="off"><div id="repo-options"><button type="button" data-repo="" aria-pressed="{{if .Repo}}false{{else}}true{{end}}">All repositories</button>{{range .Snapshot.Repositories}}<button type="button" data-repo="{{.}}" aria-pressed="{{if eq . $.Repo}}true{{else}}false{{end}}">{{.}}</button>{{end}}</div><p id="repo-empty" hidden>No repositories found</p></div></details><noscript><p>Repositories: <a href="/">All</a>{{range .Snapshot.Repositories}} · <a href="/?repo={{urlquery .}}">{{.}}</a>{{end}}</p></noscript></form>
 {{template "board" .}}
-<footer>Workflow activity from received webhooks <span>Completed: 10 min · Failed: 24 hours</span><span class="version">{{.Version}}</span></footer></div>
+<footer><p><a href="https://github.com/UnitVectorY-Labs">UnitVectorY Labs</a><span aria-hidden="true"> | </span><a href="https://opensource.org/licenses/MIT">MIT License</a><span aria-hidden="true"> | </span><a href="https://github.com/UnitVectorY-Labs/ghadashboard"><strong>ghadashboard</strong> on GitHub</a></p><span class="version">{{.Version}}</span></footer></div>
 <dialog id="run-modal" aria-labelledby="modal-title"><div class="modal-top"><h2 id="modal-title">Workflow details</h2><button type="button" id="close-modal" aria-label="Close details">×</button></div><div id="modal-content"></div></dialog>
 </body></html>{{end}}
 {{define "board"}}<main id="board" data-updated="{{iso .Snapshot.UpdatedAt}}">
-<section class="lane queued"><div class="lane-heading"><div class="lane-label"><i></i><h1>Queued</h1></div><div class="count">{{.Snapshot.QueuedJobs}} <span>jobs</span></div><div class="lane-note">{{.Snapshot.Queued}} workflows{{if .Snapshot.OldestQueuedAt}} · oldest <time data-clock="elapsed" datetime="{{iso .Snapshot.OldestQueuedAt}}"></time>{{end}}</div>{{if .Snapshot.QueuedJobs}}<div class="worker-types">{{range .Snapshot.WorkerTypes}}{{if .Queued}}<div class="worker-type"><span title="{{.Name}}">{{.Name}}</span><b>{{.Queued}}</b></div>{{end}}{{end}}</div>{{end}}</div><div class="cards">{{range .Queued}}{{template "card" .}}{{else}}{{if .Snapshot.QueuedJobs}}<p class="empty">{{.Snapshot.QueuedJobs}} queued jobs belong to running workflows.</p>{{else}}<p class="empty">The queue is clear.</p>{{end}}{{end}}</div></section>
-<section class="lane running"><div class="lane-heading"><div class="lane-label"><i></i><h1>Running</h1></div><div class="count">{{.Snapshot.RunningJobs}} <span>jobs</span></div><div class="lane-note">Across {{.Snapshot.Running}} workflows</div>{{if .Snapshot.RunningJobs}}<div class="worker-types">{{range .Snapshot.WorkerTypes}}{{if .Running}}<div class="worker-type"><span title="{{.Name}}">{{.Name}}</span><b>{{.Running}}</b></div>{{end}}{{end}}</div>{{end}}</div><div class="cards">{{range .Running}}{{template "card" .}}{{else}}<p class="empty">Nothing running right now.</p>{{end}}</div></section>
-<section class="lane completed"><div class="lane-heading"><div class="lane-label"><i></i><h1>Completed</h1></div><div class="count">{{.Snapshot.Completed}} <span>workflows</span></div><div class="lane-note">Finished in the last 10 minutes</div></div><div class="cards">{{range .Completed}}{{template "card" .}}{{else}}<p class="empty">No completions in the last 10 minutes.</p>{{end}}</div></section>
-<section class="lane failed"><div class="lane-heading"><div class="lane-label"><i></i><h1>Failed</h1></div><div class="count">{{.Snapshot.Failed}} <span>workflows</span></div><div class="lane-note">Failures in the last 24 hours</div></div><div class="cards">{{range .Failed}}{{template "card" .}}{{else}}<p class="empty">No failures in the last day.</p>{{end}}</div></section>
+<section class="lane queued"><div class="lane-heading"><div class="lane-label"><i></i><h1>Queued</h1></div><div class="count">{{.Snapshot.QueuedJobs}} <span>jobs</span></div>{{if .Snapshot.OldestQueuedAt}}<div class="lane-note">Oldest <time data-clock="elapsed" datetime="{{iso .Snapshot.OldestQueuedAt}}"></time></div>{{end}}{{if .Snapshot.QueuedJobs}}<div class="worker-types">{{range .Snapshot.WorkerTypes}}{{if .Queued}}<div class="worker-type"><span title="{{.Name}}">{{.Name}}</span><b>{{.Queued}}</b></div>{{end}}{{end}}</div>{{end}}</div><div class="cards">{{range .Queued}}{{template "card" .}}{{else}}{{if .Snapshot.QueuedJobs}}<p class="empty">{{.Snapshot.QueuedJobs}} queued jobs belong to running workflows.</p>{{else}}<p class="empty">Queue Empty</p>{{end}}{{end}}</div></section>
+<section class="lane running"><div class="lane-heading"><div class="lane-label"><i></i><h1>Running</h1></div><div class="count">{{.Snapshot.RunningJobs}} <span>jobs</span></div>{{if .Snapshot.RunningJobs}}<div class="worker-types">{{range .Snapshot.WorkerTypes}}{{if .Running}}<div class="worker-type"><span title="{{.Name}}">{{.Name}}</span><b>{{.Running}}</b></div>{{end}}{{end}}</div>{{end}}</div><div class="cards">{{range .Running}}{{template "card" .}}{{else}}<p class="empty">Nothing Running</p>{{end}}</div></section>
+<section class="lane completed"><div class="lane-heading"><div class="lane-label"><i></i><h1 class="tooltip-anchor" tabindex="0" aria-describedby="completed-window">Completed<span class="tooltip" id="completed-window" role="tooltip">Completed workflows from the last 10 minutes</span></h1></div><div class="count">{{.Snapshot.Completed}} <span>workflows</span></div></div><div class="cards">{{range .Completed}}{{template "card" .}}{{else}}<p class="empty">No Recent Completions</p>{{end}}</div></section>
+<section class="lane failed"><div class="lane-heading"><div class="lane-label"><i></i><h1 class="tooltip-anchor" tabindex="0" aria-describedby="failed-window">Failed<span class="tooltip" id="failed-window" role="tooltip">Failed workflows from the last 24 hours</span></h1></div><div class="count">{{.Snapshot.Failed}} <span>workflows</span></div></div><div class="cards">{{range .Failed}}{{template "card" .}}{{else}}<p class="empty">No Recent Failures</p>{{end}}</div></section>
 {{if not .Snapshot.LastEventAt}}<p class="coverage">Waiting for the first webhook event.</p>{{end}}</main>{{end}}
 {{define "card"}}<button class="run-card" type="button" data-run="run-{{.ID}}-{{.Attempt}}" aria-label="Details for {{.Repository}}: {{.Name}}"><span class="card-top"><strong title="{{.Repository}}">{{leaf .Repository}}</strong>{{if eq .Status "completed"}}<time data-clock="ago" datetime="{{iso (finished .)}}"></time>{{else}}<time data-clock="elapsed" datetime="{{iso (clockStart .)}}"></time>{{end}}</span><span class="workflow" title="{{.Name}}">{{if .Name}}{{.Name}}{{else}}Workflow #{{.ID}}{{end}}</span><span class="card-meta"><span title="Branch">{{.Branch}}</span><span>{{if eq .Status "completed"}}{{.Conclusion}}{{else}}{{jobSummary .Jobs}}{{end}}</span></span></button>
 <template id="run-{{.ID}}-{{.Attempt}}">{{template "details" .}}</template>{{end}}
 {{define "details"}}<div class="run-detail"><div class="detail-context"><span>{{.Repository}}</span><span class="badge {{state .}}">{{state .}}</span></div><h3>{{if .Name}}{{.Name}}{{else}}Workflow #{{.ID}}{{end}}</h3>{{if .DisplayTitle}}<p class="display-title">{{.DisplayTitle}}</p>{{end}}<div class="detail-meta"><span>{{.Branch}} · <code>{{short .SHA}}</code></span><span>#{{.Number}} · attempt {{.Attempt}}</span><span>{{.Event}}{{if .Actor}} · {{.Actor}}{{end}}</span></div><a class="github-link" href="{{safeURL .HTMLURL}}" target="_blank" rel="noopener noreferrer">Open run on GitHub ↗</a><div class="run-times"><span>Created <b>{{stamp .CreatedAt}}</b></span><span>Started <b>{{when .StartedAt}}</b></span><span>Completed <b>{{when .CompletedAt}}</b></span></div><h4>Jobs <span>{{len .Jobs}}</span></h4>{{range .Jobs}}<section class="job"><div class="job-heading"><a href="{{safeURL .HTMLURL}}" target="_blank" rel="noopener noreferrer">{{.Name}} ↗</a><span class="badge">{{if .Conclusion}}{{.Conclusion}}{{else}}{{.Status}}{{end}}</span></div><div class="job-meta">{{if .RunnerName}}{{.RunnerName}} · {{end}}{{if and .StartedAt (not .CompletedAt)}}<time data-clock="elapsed" datetime="{{iso .StartedAt}}"></time>{{else}}{{when .StartedAt}} → {{when .CompletedAt}}{{end}}</div>{{if .Labels}}<div class="labels">{{range .Labels}}<span>{{.}}</span>{{end}}</div>{{end}}{{if .Steps}}<ol class="steps">{{range .Steps}}<li><span>{{.Name}}</span><small>{{if .Conclusion}}{{.Conclusion}}{{else}}{{.Status}}{{end}}</small></li>{{end}}</ol>{{end}}</section>{{else}}<p class="empty">Waiting for job events.</p>{{end}}</div>{{end}}
+
+{{define "icon-workflow"}}<!--
+tags: [git, merge, branch, combine, version-control, vcs, github, gitlab, repository]
+category: Version control
+version: "1.0"
+unicode: "eab5"
+-->
+<svg aria-hidden="true"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M5 18a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" />
+  <path d="M5 6a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" />
+  <path d="M15 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" />
+  <path d="M7 8l0 8" />
+  <path d="M7 8a4 4 0 0 0 4 4h4" />
+</svg>{{end}}
+
+{{define "icon-sun"}}<!--
+tags: [light-mode, light, theme, day, brightness, weather, sunny, bright, sun]
+category: Weather
+version: "1.0"
+unicode: "eb30"
+-->
+<svg aria-hidden="true"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+  <path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" />
+</svg>{{end}}
+
+{{define "icon-moon"}}<!--
+tags: [night, dark-mode, dark, theme, crescent, sleep, lunar, evening, moon]
+category: Weather
+version: "1.0"
+unicode: "eaf8"
+-->
+<svg aria-hidden="true"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008" />
+</svg>{{end}}

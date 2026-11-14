@@ -6,7 +6,7 @@ const modal = document.getElementById('run-modal');
 const modalContent = document.getElementById('modal-content');
 let source;
 let selectedRun;
-let knownRepositories = [];
+let knownRepositories = [...document.querySelectorAll('[data-repo]')].map(button => button.dataset.repo).filter(Boolean);
 let lastHTML;
 
 function formatDuration(milliseconds) {
@@ -26,17 +26,50 @@ function tick() {
   });
 }
 function setStatus(text, state) {
-  connection.textContent = text;
+  connection.setAttribute('aria-label', text);
+  document.getElementById('connection-tip').textContent = text;
   connection.dataset.state = state;
 }
+const picker = document.getElementById('repo-picker');
+const search = document.getElementById('repo-search');
+const options = document.getElementById('repo-options');
 function updateOptions() {
-  // Native dropdowns stay untouched while the user is choosing a repository.
-  if (document.activeElement === repository) return;
-  const current = new Set([...repository.options].map(option => option.value));
-  knownRepositories.forEach(repo => {
-    if (!current.has(repo)) repository.add(new Option(repo, repo));
-  });
+  const query = search.value.trim().toLowerCase();
+  const repos = [...new Set(['', ...knownRepositories, ...(repository.value ? [repository.value] : [])])];
+  options.replaceChildren(...repos.filter(repo => !repo || repo.toLowerCase().includes(query)).map(repo => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.repo = repo;
+    button.textContent = repo || 'All repositories';
+    button.setAttribute('aria-pressed', String(repo === repository.value));
+    return button;
+  }));
+  document.getElementById('repo-empty').hidden = !query || repos.some(repo => repo && repo.toLowerCase().includes(query));
 }
+search.addEventListener('input', updateOptions);
+picker.addEventListener('toggle', () => {
+  if (picker.open) { search.value = ''; updateOptions(); search.focus(); }
+});
+options.addEventListener('click', event => {
+  const button = event.target.closest('[data-repo]');
+  if (!button) return;
+  repository.value = button.dataset.repo;
+  document.getElementById('repo-picker-label').firstChild.textContent = repository.value || 'All repositories';
+  picker.open = false;
+  picker.querySelector('summary').focus();
+  repository.dispatchEvent(new Event('change'));
+});
+document.addEventListener('click', event => { if (!picker.contains(event.target)) picker.open = false; });
+picker.addEventListener('keydown', event => {
+  if (event.key === 'Escape') { picker.open = false; picker.querySelector('summary').focus(); }
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    const buttons = [...options.querySelectorAll('button')];
+    const index = buttons.indexOf(document.activeElement);
+    const next = event.key === 'ArrowDown' ? (index + 1) % buttons.length : (index <= 0 ? buttons.length - 1 : index - 1);
+    buttons[next]?.focus();
+    event.preventDefault();
+  }
+});
 function refreshModal() {
   if (!modal.open || !selectedRun) return;
   const template = document.getElementById(selectedRun);
@@ -67,7 +100,6 @@ function connect() {
       lastHTML = data.html;
       refreshModal();
     }
-    document.getElementById('updated').textContent = 'Updated ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
     setStatus('Live', 'live');
     tick();
   });
@@ -79,7 +111,6 @@ repository.addEventListener('change', () => {
   history.replaceState(null, '', url);
   connect();
 });
-repository.addEventListener('blur', updateOptions);
 document.querySelector('.toolbar').addEventListener('submit', event => {event.preventDefault(); connect();});
 document.body.addEventListener('click', event => {
   const card = event.target.closest('[data-run]');
@@ -97,3 +128,17 @@ modal.addEventListener('close', () => {document.querySelector(`[data-run="${CSS.
 setInterval(tick, 1000);
 tick();
 connect();
+
+const themeToggle = document.getElementById('theme-toggle');
+function updateThemeLabel() {
+  const dark = document.documentElement.classList.contains('dark');
+  themeToggle.querySelector('[data-theme-label]').textContent = dark ? 'Light mode' : 'Dark mode';
+  themeToggle.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+  themeToggle.setAttribute('aria-pressed', String(dark));
+}
+themeToggle.addEventListener('click', () => {
+  const dark = document.documentElement.classList.contains('dark');
+  window.dashboardTheme.set(dark ? 'light' : 'dark');
+});
+document.addEventListener('themechange', updateThemeLabel);
+updateThemeLabel();
