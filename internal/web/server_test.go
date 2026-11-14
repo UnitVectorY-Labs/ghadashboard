@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -49,6 +51,16 @@ func TestDashboardRenderingAndFiltering(t *testing.T) {
 	}
 	if strings.Contains(body, "javascript:") || strings.Contains(body, "<script>alert(1)") {
 		t.Fatal("unsafe webhook content rendered")
+	}
+	links := regexp.MustCompile(`href="([^" ]*\?repo=[^" ]*)"`).FindAllStringSubmatch(body, -1)
+	if len(links) == 0 {
+		t.Fatal("repository navigation link missing")
+	}
+	for _, link := range links {
+		target, err := url.Parse(link[1])
+		if err != nil || target.Query().Get("repo") != "org/repo" {
+			t.Fatalf("incorrect repository navigation URL: %s", link[1])
+		}
 	}
 	if src.repo != "org/repo" {
 		t.Errorf("filter = %q", src.repo)

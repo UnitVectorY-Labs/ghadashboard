@@ -56,7 +56,6 @@ func New(source Source, version string) *Server {
 			}
 			return s
 		},
-		"query": url.QueryEscape,
 		"state": func(r store.Run) string {
 			if r.Conclusion != "" {
 				return r.Conclusion
