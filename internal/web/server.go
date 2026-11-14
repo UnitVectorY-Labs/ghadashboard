@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -68,18 +69,8 @@ func New(source Source, version string) *Server {
 			}
 			return r.Status
 		},
-		"clockStart": func(r store.Run) time.Time {
-			if r.Status == "queued" || r.Status == "waiting" || r.Status == "pending" || r.Status == "requested" || r.StartedAt == nil {
-				return r.CreatedAt
-			}
-			return *r.StartedAt
-		},
-		"finished": func(r store.Run) time.Time {
-			if r.CompletedAt != nil {
-				return *r.CompletedAt
-			}
-			return r.UpdatedAt
-		},
+		"clockStart": runClockStart,
+		"finished":   runFinishedAt,
 		"jobSummary": func(jobs []store.Job) string {
 			done := 0
 			for _, j := range jobs {
@@ -142,8 +133,34 @@ func (s *Server) load(ctx context.Context, repo, version string) (page, error) {
 			p.Completed = append(p.Completed, run)
 		}
 	}
+	// Sort by the timestamps shown on the cards, independent of event updates.
+	slices.SortStableFunc(p.Queued, func(a, b store.Run) int {
+		return a.CreatedAt.Compare(b.CreatedAt)
+	})
+	slices.SortStableFunc(p.Running, func(a, b store.Run) int {
+		return runClockStart(a).Compare(runClockStart(b))
+	})
+	for _, runs := range [][]store.Run{p.Completed, p.Failed} {
+		slices.SortStableFunc(runs, func(a, b store.Run) int {
+			return runFinishedAt(b).Compare(runFinishedAt(a))
+		})
+	}
 	return p, nil
 }
+func runClockStart(r store.Run) time.Time {
+	if r.Status == "queued" || r.Status == "waiting" || r.Status == "pending" || r.Status == "requested" || r.StartedAt == nil {
+		return r.CreatedAt
+	}
+	return *r.StartedAt
+}
+
+func runFinishedAt(r store.Run) time.Time {
+	if r.CompletedAt != nil {
+		return *r.CompletedAt
+	}
+	return r.UpdatedAt
+}
+
 func (s *Server) render(w http.ResponseWriter, r *http.Request, name, version string) {
 	repo := r.URL.Query().Get("repo")
 	if len(repo) > 300 {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -159,5 +160,50 @@ func TestAssetsAndURLs(t *testing.T) {
 		if SafeGitHubURL(raw) != "" {
 			t.Errorf("unsafe URL %q", raw)
 		}
+	}
+}
+
+func TestDashboardRunOrdering(t *testing.T) {
+	now := time.Now().UTC()
+	earlier := now.Add(-time.Minute)
+	oldest := now.Add(-2 * time.Minute)
+	for _, status := range []string{"queued", "in_progress", "success", "failure"} {
+		t.Run(status, func(t *testing.T) {
+			// Event update order deliberately differs from queue/start/finish order.
+			runs := []store.Run{
+				{ID: 1, CreatedAt: now, UpdatedAt: oldest, StartedAt: &oldest, CompletedAt: &oldest},
+				{ID: 2, CreatedAt: oldest, UpdatedAt: now, StartedAt: &now, CompletedAt: &now},
+				{ID: 3, CreatedAt: earlier, UpdatedAt: earlier}, // Missing optional timestamps use the card's fallback.
+			}
+			for i := range runs {
+				runs[i].Status = status
+				runs[i].Attempt = 1
+				if status == "success" || status == "failure" {
+					runs[i].Status = "completed"
+					runs[i].Conclusion = status
+				}
+			}
+			want := []int{2, 3, 1}
+			if status == "in_progress" {
+				want = []int{1, 3, 2}
+			}
+			server := New(&fakeSource{snapshot: store.Snapshot{UpdatedAt: now, Runs: runs}}, "v")
+			// Both initial pages and the fragment used for live updates share this ordering.
+			for _, path := range []string{"/", "/dashboard"} {
+				w := httptest.NewRecorder()
+				server.Handler("v").ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+				if w.Code != http.StatusOK {
+					t.Fatalf("%s: status %d", path, w.Code)
+				}
+				previous := -1
+				for _, id := range want {
+					position := strings.Index(w.Body.String(), fmt.Sprintf(`data-run="run-%d-1"`, id))
+					if position <= previous {
+						t.Fatalf("%s: expected card order %v; run %d at %d after %d", path, want, id, position, previous)
+					}
+					previous = position
+				}
+			}
+		})
 	}
 }
