@@ -42,7 +42,7 @@ func TestDashboardRenderingAndFiltering(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("render: %d %s", w.Code, body)
 	}
-	for _, want := range []string{"&lt;script&gt;alert(1)&lt;/script&gt;", "Failed run", "run-101-1", "test-version", "selected", "1 jobs"} {
+	for _, want := range []string{"&lt;script&gt;alert(1)&lt;/script&gt;", "Failed run", "run-101-1", "test-version", "selected", "1 jobs", `"includeIndicatorStyles":false`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}
