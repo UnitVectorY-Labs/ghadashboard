@@ -192,6 +192,9 @@ WHERE (dashboard_jobs.state_rank < 3 AND EXCLUDED.state_rank = 3) OR
 
 // Snapshot selects all active latest attempts, up to 100 failures from the
 // last 24 hours, and up to 100 other completions from the last ten minutes.
+// A completed run is superseded once a newer run of the same workflow name
+// and branch is observed, even when the retrigger used a different run id:
+// only the most recent trigger of a workflow decides its displayed outcome.
 // Counts include every matching latest attempt within its display window.
 // Stored retention is independent of these display windows.
 func (s *Store) Snapshot(ctx context.Context, repo string) (Snapshot, error) {
@@ -221,9 +224,10 @@ func (s *Store) Snapshot(ctx context.Context, repo string) (Snapshot, error) {
 	if err := tx.QueryRow(ctx, `SELECT max(received_at) FROM dashboard_deliveries`).Scan(&out.LastEventAt); err != nil {
 		return out, err
 	}
-	rows, err = tx.Query(ctx, `WITH latest AS (SELECT DISTINCT ON(repository,run_id) * FROM dashboard_runs WHERE ($1='' OR repository=$1) ORDER BY repository,run_id,attempt DESC)
+	rows, err = tx.Query(ctx, `WITH latest AS (SELECT DISTINCT ON(repository,run_id) * FROM dashboard_runs WHERE ($1='' OR repository=$1) ORDER BY repository,run_id,attempt DESC),
+current_state AS (SELECT *,MAX(run_id) OVER (PARTITION BY repository,COALESCE(document->>'name',''),COALESCE(document->>'head_branch','')) AS newest_run_id FROM latest)
 SELECT document,authoritative,COALESCE((SELECT jsonb_agg(j.document ORDER BY j.job_id) FROM dashboard_jobs j WHERE j.repository=r.repository AND j.run_id=r.run_id AND j.attempt=r.attempt),'[]'::jsonb)
-FROM latest r WHERE status<>'completed' OR event_time >= $2 ORDER BY event_time DESC`, repo, out.UpdatedAt.Add(-24*time.Hour))
+FROM current_state r WHERE status<>'completed' OR (event_time >= $2 AND run_id=newest_run_id) ORDER BY event_time DESC`, repo, out.UpdatedAt.Add(-24*time.Hour))
 	if err != nil {
 		return out, err
 	}

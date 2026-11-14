@@ -173,7 +173,7 @@ func TestSnapshotDisplayWindowsAndLatestAttemptJobCounts(t *testing.T) {
 	applyRun := func(repo string, id int64, attempt int, status, conclusion string, age time.Duration) {
 		t.Helper()
 		when := now.Add(-age)
-		r := &Run{Repository: repo, ID: id, Attempt: attempt, Status: status, Conclusion: conclusion, CreatedAt: when, UpdatedAt: when}
+		r := &Run{Repository: repo, ID: id, Attempt: attempt, Name: fmt.Sprintf("Workflow %d", id), Status: status, Conclusion: conclusion, CreatedAt: when, UpdatedAt: when}
 		if status == "completed" {
 			r.CompletedAt = &when
 		}
@@ -227,6 +227,57 @@ func TestSnapshotDisplayWindowsAndLatestAttemptJobCounts(t *testing.T) {
 	}
 }
 
+func TestSnapshotRetriggeredWorkflowSupersedesFailure(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	applyRun := func(id int64, name, branch, status, conclusion string, age time.Duration) {
+		t.Helper()
+		when := now.Add(-age)
+		r := &Run{Repository: "org/repo", ID: id, Attempt: 1, Name: name, Branch: branch, Status: status, Conclusion: conclusion, CreatedAt: when, UpdatedAt: when}
+		if status == "completed" {
+			r.CompletedAt = &when
+		}
+		if err := s.Apply(ctx, events.Event{DeliveryID: fmt.Sprintf("retrigger-run-%d-%s", id, status), Run: r}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A failed run stays failed until the workflow is triggered again.
+	applyRun(1, "Build", "main", "completed", "failure", 3*time.Hour)
+	if snap, err := s.Snapshot(ctx, ""); err != nil || snap.Failed != 1 {
+		t.Fatalf("failure before retrigger: %+v %v", snap, err)
+	}
+	// A queued retrigger under a new run id clears the failure immediately.
+	applyRun(2, "Build", "main", "queued", "", time.Hour)
+	if snap, err := s.Snapshot(ctx, ""); err != nil || snap.Failed != 0 || snap.Queued != 1 || len(snap.Runs) != 1 {
+		t.Fatalf("queued retrigger did not clear failure: %+v %v", snap, err)
+	}
+	// The retriggered run's success becomes the workflow's displayed outcome.
+	applyRun(2, "Build", "main", "completed", "success", 4*time.Minute)
+	if snap, err := s.Snapshot(ctx, ""); err != nil || snap.Failed != 0 || snap.Completed != 1 || len(snap.Runs) != 1 || snap.Runs[0].ID != 2 {
+		t.Fatalf("completed retrigger did not replace failure: %+v %v", snap, err)
+	}
+	// A run on another branch is independent and keeps its own failure.
+	applyRun(3, "Build", "release", "completed", "failure", 2*time.Hour)
+	if snap, err := s.Snapshot(ctx, ""); err != nil || snap.Failed != 1 || snap.Completed != 1 {
+		t.Fatalf("branch isolation: %+v %v", snap, err)
+	}
+	// A newer failure replaces the older success, which leaves Completed.
+	applyRun(4, "Build", "main", "completed", "failure", 2*time.Minute)
+	if snap, err := s.Snapshot(ctx, ""); err != nil || snap.Failed != 2 || snap.Completed != 0 {
+		t.Fatalf("newer failure not displayed: %+v %v", snap, err)
+	}
+	// A job event for a new run id retriggers the workflow even before the
+	// authoritative workflow event arrives.
+	if err := s.Apply(ctx, events.Event{DeliveryID: "retrigger-job", Job: &Job{Repository: "org/repo", RunID: 5, ID: 91, Attempt: 1, WorkflowName: "Build", Branch: "main", Status: "queued", CreatedAt: now.Add(-time.Minute), UpdatedAt: now.Add(-time.Minute)}}); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := s.Snapshot(ctx, "")
+	if err != nil || snap.Failed != 1 || snap.Queued != 1 || snap.QueuedJobs != 1 || len(snap.Runs) != 2 {
+		t.Fatalf("job-first retrigger did not clear failure: %+v %v", snap, err)
+	}
+}
+
 func TestSnapshotCountsRemainUncapped(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -237,7 +288,7 @@ func TestSnapshotCountsRemainUncapped(t *testing.T) {
 			if conclusion == "failure" {
 				id += 1000
 			}
-			r := &Run{Repository: "org/repo", ID: id, Attempt: 1, Status: "completed", Conclusion: conclusion, CreatedAt: now, UpdatedAt: now, CompletedAt: &now}
+			r := &Run{Repository: "org/repo", ID: id, Attempt: 1, Name: fmt.Sprintf("Workflow %d", id), Status: "completed", Conclusion: conclusion, CreatedAt: now, UpdatedAt: now, CompletedAt: &now}
 			if err := s.Apply(ctx, events.Event{DeliveryID: fmt.Sprint(id), Run: r}); err != nil {
 				t.Fatal(err)
 			}
