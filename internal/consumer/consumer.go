@@ -40,12 +40,24 @@ func Run(ctx context.Context, database *store.Store, project, subscription strin
 			message.Nack()
 			return
 		}
-		if err = database.Apply(ctx, event); err != nil {
+		if err = persist(ctx, event, database.Apply, message.Ack, message.Nack); err != nil {
 			slog.Error("webhook persistence failed; retrying", "message_id", message.ID)
-			message.Nack()
 			return
 		}
-		message.Ack()
 		slog.Debug("webhook committed", "message_id", message.ID, "event", event.Type, "age_ms", time.Since(message.PublishTime).Milliseconds())
 	})
+}
+
+// Stopping Receive cancels callback contexts. Give an accepted event a bounded
+// opportunity to commit anyway, leaving time in the process shutdown window
+// for Receive to flush acknowledgements and close its client.
+func persist(ctx context.Context, event events.Event, apply func(context.Context, events.Event) error, ack, nack func()) error {
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := apply(writeCtx, event); err != nil {
+		nack()
+		return err
+	}
+	ack()
+	return nil
 }

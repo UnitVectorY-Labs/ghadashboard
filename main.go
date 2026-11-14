@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -87,19 +88,32 @@ func run() error {
 		}
 		fmt.Fprintln(w, "ready")
 	})
-	errorsCh := make(chan error, 2)
-	if cfg.Mode == "web" {
-		dashboard := web.New(database, Version)
-		mux.Handle("/", dashboard.Handler(Version))
-		go func() { errorsCh <- dashboard.Run(ctx) }()
-	} else {
-		go func() { errorsCh <- consumer.Run(ctx, database, cfg.Project, cfg.Subscription) }()
-		go prune(ctx, database)
-	}
 	listener, err := net.Listen("tcp", cfg.Address)
 	if err != nil {
 		return errors.New("HTTP listener failed")
 	}
+	errorsCh := make(chan error, 2)
+	var workers sync.WaitGroup
+	startWorker := func(work func()) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			work()
+		}()
+	}
+	if cfg.Mode == "web" {
+		dashboard := web.New(database, Version)
+		mux.Handle("/", dashboard.Handler(Version))
+		startWorker(func() { errorsCh <- dashboard.Run(ctx) })
+	} else {
+		startWorker(func() { errorsCh <- consumer.Run(ctx, database, cfg.Project, cfg.Subscription) })
+		startWorker(func() { prune(ctx, database) })
+	}
+	workersDone := make(chan struct{})
+	go func() {
+		workers.Wait()
+		close(workersDone)
+	}()
 	server := &http.Server{BaseContext: func(net.Listener) context.Context { return ctx }, Handler: mux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
 	go func() { errorsCh <- server.Serve(listener) }()
 	slog.Info("application started", "version", Version, "mode", cfg.Mode, "address", cfg.Address)
@@ -111,11 +125,22 @@ func run() error {
 			result = errors.New("runtime worker stopped; check service availability")
 		}
 	}
-	cancel()
-	shutdown, stop := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stop()
-	_ = server.Shutdown(shutdown)
-	return result
+	return errors.Join(result, shutdown(shutdownCtx, cancel, server, workersDone))
+}
+
+// Wait for Receive (including callback completion and ACK delivery) before the
+// deferred database close. The same deadline bounds HTTP and worker shutdown.
+func shutdown(ctx context.Context, cancel context.CancelFunc, server *http.Server, workersDone <-chan struct{}) error {
+	cancel()
+	httpErr := server.Shutdown(ctx)
+	select {
+	case <-workersDone:
+		return httpErr
+	case <-ctx.Done():
+		return errors.Join(httpErr, errors.New("runtime workers did not stop before shutdown deadline"))
+	}
 }
 func prune(ctx context.Context, database *store.Store) {
 	ticker := time.NewTicker(time.Hour)
