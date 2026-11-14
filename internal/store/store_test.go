@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -162,5 +163,153 @@ func TestWaitingTransitionsAndExpiredAttemptSuppression(t *testing.T) {
 	}
 	if len(snapshot.Runs) != 0 {
 		t.Fatal("prune resurrected old active attempt")
+	}
+}
+
+func TestSnapshotDisplayWindowsAndLatestAttemptJobCounts(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	applyRun := func(repo string, id int64, attempt int, status, conclusion string, age time.Duration) {
+		t.Helper()
+		when := now.Add(-age)
+		r := &Run{Repository: repo, ID: id, Attempt: attempt, Status: status, Conclusion: conclusion, CreatedAt: when, UpdatedAt: when}
+		if status == "completed" {
+			r.CompletedAt = &when
+		}
+		if err := s.Apply(ctx, events.Event{DeliveryID: fmt.Sprintf("run-%s-%d-%d", repo, id, attempt), Run: r}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	applyJob := func(runID, jobID int64, status string, age time.Duration) {
+		t.Helper()
+		when := now.Add(-age)
+		if err := s.Apply(ctx, events.Event{DeliveryID: fmt.Sprintf("job-%d", jobID), Job: &Job{Repository: "org/repo", RunID: runID, ID: jobID, Attempt: 1, Status: status, CreatedAt: when, UpdatedAt: when}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	applyRun("org/repo", 1, 1, "completed", "success", 9*time.Minute)
+	applyRun("org/repo", 2, 1, "completed", "cancelled", 9*time.Minute)
+	applyRun("org/repo", 3, 1, "completed", "success", 11*time.Minute)
+	applyRun("org/repo", 4, 1, "completed", "failure", 23*time.Hour)
+	applyRun("org/repo", 5, 1, "completed", "failure", 25*time.Hour)
+	applyRun("org/repo", 6, 1, "queued", "", time.Hour)
+	applyRun("org/repo", 7, 1, "in_progress", "", time.Hour)
+	applyRun("org/repo", 8, 1, "completed", "success", 2*time.Minute)
+	applyRun("org/repo", 9, 1, "in_progress", "", 2*time.Hour)
+	applyRun("org/repo", 9, 2, "completed", "success", 11*time.Minute)
+	applyRun("other/repo", 10, 1, "completed", "failure", time.Minute)
+	applyJob(6, 1, "queued", 10*time.Minute)
+	applyJob(6, 2, "in_progress", 9*time.Minute)
+	applyJob(7, 3, "waiting", 5*time.Minute)
+	applyJob(7, 4, "in_progress", 4*time.Minute)
+	applyJob(7, 5, "completed", 3*time.Minute)
+	applyJob(8, 6, "queued", 3*time.Minute) // Missed job completion cannot inflate active totals.
+	snapshot, err := s.Snapshot(ctx, "org/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Queued != 1 || snapshot.Running != 1 || snapshot.Completed != 3 || snapshot.Failed != 1 || len(snapshot.Runs) != 6 {
+		t.Fatalf("incorrect display windows/counts: %+v", snapshot)
+	}
+	if snapshot.QueuedJobs != 2 || snapshot.RunningJobs != 2 || snapshot.OldestQueuedAt == nil || !snapshot.OldestQueuedAt.Equal(now.Add(-10*time.Minute)) {
+		t.Fatalf("incorrect latest active job totals: %+v", snapshot)
+	}
+	if len(snapshot.Repositories) != 2 {
+		t.Fatal("repository choices must remain global")
+	}
+	global, err := s.Snapshot(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if global.Failed != 2 || global.Completed != 3 || global.QueuedJobs != 2 {
+		t.Fatalf("incorrect global totals: %+v", global)
+	}
+}
+
+func TestSnapshotCountsRemainUncapped(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for i := range 105 {
+		for _, conclusion := range []string{"success", "failure"} {
+			id := int64(i + 1)
+			if conclusion == "failure" {
+				id += 1000
+			}
+			r := &Run{Repository: "org/repo", ID: id, Attempt: 1, Status: "completed", Conclusion: conclusion, CreatedAt: now, UpdatedAt: now, CompletedAt: &now}
+			if err := s.Apply(ctx, events.Event{DeliveryID: fmt.Sprint(id), Run: r}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := s.Apply(ctx, events.Event{DeliveryID: "active", Run: &Run{Repository: "org/repo", ID: 3000, Attempt: 1, Status: "queued", CreatedAt: now, UpdatedAt: now}}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := s.Snapshot(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Completed != 105 || snapshot.Failed != 105 || snapshot.Queued != 1 || len(snapshot.Runs) != 201 {
+		t.Fatalf("display cap corrupted counts or hid active work: completed=%d failed=%d queued=%d cards=%d", snapshot.Completed, snapshot.Failed, snapshot.Queued, len(snapshot.Runs))
+	}
+}
+
+func TestSnapshotWorkerTypesCanonicalLabelsAndActiveAttempts(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	applyRun := func(id int64, attempt int, status string) {
+		t.Helper()
+		if err := s.Apply(ctx, events.Event{DeliveryID: fmt.Sprintf("worker-run-%d-%d", id, attempt), Run: &Run{Repository: "org/repo", ID: id, Attempt: attempt, Status: status, CreatedAt: now, UpdatedAt: now}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	applyJob := func(id, runID int64, attempt int, status string, labels []string, age time.Duration) {
+		t.Helper()
+		when := now.Add(-age)
+		if err := s.Apply(ctx, events.Event{DeliveryID: fmt.Sprintf("worker-job-%d", id), Job: &Job{Repository: "org/repo", ID: id, RunID: runID, Attempt: attempt, Status: status, Labels: labels, CreatedAt: when, UpdatedAt: when}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	applyRun(1, 1, "in_progress")
+	applyRun(2, 1, "completed")
+	applyRun(3, 1, "in_progress")
+	applyRun(3, 2, "queued")
+	applyJob(1, 1, 1, "queued", []string{"self-hosted", "Linux", "ARM64", "Linux"}, 8*time.Minute)
+	applyJob(2, 1, 1, "waiting", []string{"ARM64", "self-hosted", "Linux"}, 3*time.Minute)
+	applyJob(3, 1, 1, "in_progress", []string{"Linux", "ARM64", "self-hosted"}, time.Minute)
+	applyJob(4, 1, 1, "in_progress", []string{"ubuntu-latest"}, time.Minute)
+	applyJob(5, 1, 1, "requested", nil, 2*time.Minute)
+	applyJob(6, 1, 1, "completed", []string{"completed-job"}, time.Minute)
+	applyJob(7, 2, 1, "in_progress", []string{"completed-parent"}, time.Minute)
+	applyJob(8, 3, 1, "queued", []string{"superseded-attempt"}, time.Minute)
+	applyJob(9, 3, 2, "pending", []string{"arc-runner-set"}, time.Minute)
+	snapshot, err := s.Snapshot(ctx, "org/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantNames := []string{"ARM64, Linux, self-hosted", "Unreported", "arc-runner-set", "ubuntu-latest"}
+	var gotNames []string
+	for _, worker := range snapshot.WorkerTypes {
+		gotNames = append(gotNames, worker.Name)
+	}
+	if !reflect.DeepEqual(gotNames, wantNames) {
+		t.Fatalf("worker groups/order: %v", gotNames)
+	}
+	selfHosted := snapshot.WorkerTypes[0]
+	if !reflect.DeepEqual(selfHosted.Labels, []string{"ARM64", "Linux", "self-hosted"}) || selfHosted.Queued != 2 || selfHosted.Running != 1 || selfHosted.OldestQueuedAt == nil || !selfHosted.OldestQueuedAt.Equal(now.Add(-8*time.Minute)) {
+		t.Fatalf("label-set grouping/queue age: %+v", selfHosted)
+	}
+	if snapshot.WorkerTypes[1].Queued != 1 || len(snapshot.WorkerTypes[1].Labels) != 0 || snapshot.WorkerTypes[2].Queued != 1 || snapshot.WorkerTypes[3].Running != 1 {
+		t.Fatalf("distinct worker type counts: %+v", snapshot.WorkerTypes)
+	}
+	queued, running := 0, 0
+	for _, worker := range snapshot.WorkerTypes {
+		queued += worker.Queued
+		running += worker.Running
+	}
+	if queued != snapshot.QueuedJobs || running != snapshot.RunningJobs || queued != 4 || running != 2 {
+		t.Fatalf("worker totals differ from job totals: queued=%d/%d running=%d/%d", queued, snapshot.QueuedJobs, running, snapshot.RunningJobs)
 	}
 }

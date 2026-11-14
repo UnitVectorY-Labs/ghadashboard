@@ -3,12 +3,12 @@ package web
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,12 +16,15 @@ import (
 )
 
 type fakeSource struct {
+	mu       sync.Mutex
 	snapshot store.Snapshot
 	repo     string
 	err      error
 }
 
 func (f *fakeSource) Snapshot(_ context.Context, repo string) (store.Snapshot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.repo = repo
 	return f.snapshot, f.err
 }
@@ -32,47 +35,41 @@ func (f *fakeSource) Listen(ctx context.Context, fn func()) error {
 }
 func TestDashboardRenderingAndFiltering(t *testing.T) {
 	now := time.Now().UTC()
-	src := &fakeSource{snapshot: store.Snapshot{UpdatedAt: now, Repositories: []string{"org/repo"}, Running: 1, Failed: 1, Runs: []store.Run{
-		{ID: 101, Attempt: 1, Repository: "org/repo", Name: "<script>alert(1)</script>", Status: "in_progress", CreatedAt: now, HTMLURL: "javascript:alert(1)", Jobs: []store.Job{{Name: "build", Status: "queued"}}},
+	src := &fakeSource{snapshot: store.Snapshot{UpdatedAt: now, Repositories: []string{"org/repo"}, Running: 1, RunningJobs: 1, QueuedJobs: 2, Failed: 1, OldestQueuedAt: &now, WorkerTypes: []store.WorkerType{{Name: "ubuntu-latest", Queued: 2, Running: 1}}, Runs: []store.Run{
+		{ID: 101, Attempt: 1, Repository: "org/repo", Name: "<script>alert(1)</script>", Status: "in_progress", CreatedAt: now, HTMLURL: "javascript:alert(1)", Jobs: []store.Job{{Name: "build", Status: "queued", StartedAt: &now}}},
 		{ID: 102, Attempt: 2, Repository: "org/repo", Name: "Failed run", Status: "completed", Conclusion: "failure", CreatedAt: now},
 	}}}
-	server := New(src, "test-version")
-	r := httptest.NewRequest("GET", "/?repo=org%2Frepo", nil)
+	s := New(src, "test-version")
 	w := httptest.NewRecorder()
-	server.Handler("test-version").ServeHTTP(w, r)
+	s.Handler("test-version").ServeHTTP(w, httptest.NewRequest("GET", "/?repo=org%2Frepo", nil))
 	body := w.Body.String()
 	if w.Code != 200 {
-		t.Fatalf("render: %d %s", w.Code, body)
+		t.Fatalf("render %d: %s", w.Code, body)
 	}
-	for _, want := range []string{"&lt;script&gt;alert(1)&lt;/script&gt;", "Failed run", "run-101-1", "test-version", "selected", "1 jobs", `"includeIndicatorStyles":false`} {
+	for _, want := range []string{"&lt;script&gt;alert(1)&lt;/script&gt;", "Failed run", "run-101-1", "test-version", "selected", "ubuntu-latest", "run-modal", `"includeIndicatorStyles":false`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}
 	}
 	if strings.Contains(body, "javascript:") || strings.Contains(body, "<script>alert(1)") {
-		t.Fatal("unsafe webhook content rendered")
-	}
-	links := regexp.MustCompile(`href="([^" ]*\?repo=[^" ]*)"`).FindAllStringSubmatch(body, -1)
-	if len(links) == 0 {
-		t.Fatal("repository navigation link missing")
-	}
-	for _, link := range links {
-		target, err := url.Parse(link[1])
-		if err != nil || target.Query().Get("repo") != "org/repo" {
-			t.Fatalf("incorrect repository navigation URL: %s", link[1])
-		}
+		t.Fatal("unsafe webhook content")
 	}
 	if src.repo != "org/repo" {
-		t.Errorf("filter = %q", src.repo)
+		t.Fatal("filter not passed")
+	}
+	if !(strings.Index(body, `lane queued`) < strings.Index(body, `lane running`) && strings.Index(body, `lane running`) < strings.Index(body, `lane completed`) && strings.Index(body, `lane completed`) < strings.Index(body, `lane failed`)) {
+		t.Fatal("columns not in workflow order")
 	}
 	if !strings.Contains(w.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'") {
 		t.Fatal("missing CSP")
 	}
-	r = httptest.NewRequest("GET", "/dashboard?repo=org%2Frepo", nil)
 	w = httptest.NewRecorder()
-	server.Handler("v").ServeHTTP(w, r)
+	s.Handler("v").ServeHTTP(w, httptest.NewRequest("GET", "/dashboard?repo=org%2Frepo", nil))
 	if w.Code != 200 || strings.Contains(w.Body.String(), "<!doctype") {
-		t.Fatal("fragment returned full page")
+		t.Fatal("fragment includes full page")
+	}
+	if strings.Contains(w.Body.String(), `id="repository"`) {
+		t.Fatal("live board replaces repository controls")
 	}
 }
 func TestUnavailableDoesNotExposeError(t *testing.T) {
@@ -80,30 +77,60 @@ func TestUnavailableDoesNotExposeError(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.Handler("v").ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
 	if w.Code != 503 || strings.Contains(w.Body.String(), "secret") {
-		t.Fatal("unsafe database error response")
+		t.Fatal("unsafe error response")
 	}
 }
-func TestEventStreamSignalsAndUnsubscribes(t *testing.T) {
-	s := New(&fakeSource{}, "v")
+func TestEventStreamPushesRenderedFilteredContent(t *testing.T) {
+	src := &fakeSource{snapshot: store.Snapshot{UpdatedAt: time.Now(), Repositories: []string{"org/repo"}}}
+	s := New(src, "v")
 	server := httptest.NewServer(s.Handler("v"))
 	defer server.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, "GET", server.URL+"/events", nil)
+	req, _ := http.NewRequestWithContext(ctx, "GET", server.URL+"/events?repo=org%2Frepo", nil)
 	response, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	reader := bufio.NewReader(response.Body)
-	for i := 0; i < 3; i++ {
-		if _, err := reader.ReadString('\n'); err != nil {
+	read := func() string {
+		t.Helper()
+		event, err := reader.ReadString('\n')
+		if err != nil || event != "event: dashboard\n" {
+			t.Fatalf("event %q: %v", event, err)
+		}
+		line, err := reader.ReadString('\n')
+		if err != nil {
 			t.Fatal(err)
 		}
+		_, _ = reader.ReadString('\n')
+		var data struct {
+			HTML         string   `json:"html"`
+			Repositories []string `json:"repositories"`
+		}
+		if err = json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &data); err != nil {
+			t.Fatal(err)
+		}
+		if len(data.Repositories) != 1 {
+			t.Fatal("missing repository options")
+		}
+		return data.HTML
 	}
+	if !strings.Contains(read(), `id="board"`) {
+		t.Fatal("server did not push rendered HTML")
+	}
+	src.mu.Lock()
+	src.snapshot.Runs = []store.Run{{ID: 123, Attempt: 1, Repository: "org/repo", Name: "Pushed update", Status: "queued"}}
+	src.mu.Unlock()
 	s.broadcast()
-	line, err := reader.ReadString('\n')
-	if err != nil || line != "event: change\n" {
-		t.Fatalf("event %q: %v", line, err)
+	if !strings.Contains(read(), "Pushed update") {
+		t.Fatal("committed change not rendered")
+	}
+	src.mu.Lock()
+	repo := src.repo
+	src.mu.Unlock()
+	if repo != "org/repo" {
+		t.Fatal("stream lost repository filter")
 	}
 	response.Body.Close()
 	cancel()
@@ -117,9 +144,9 @@ func TestEventStreamSignalsAndUnsubscribes(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatal("closed browser retained stream subscription")
+	t.Fatal("stream subscription leaked")
 }
-func TestStaticAssetsAndURLValidation(t *testing.T) {
+func TestAssetsAndURLs(t *testing.T) {
 	s := New(&fakeSource{}, "v")
 	for _, path := range []string{"/static/htmx.min.js", "/static/style.css", "/static/app.js"} {
 		w := httptest.NewRecorder()
@@ -130,7 +157,7 @@ func TestStaticAssetsAndURLValidation(t *testing.T) {
 	}
 	for _, raw := range []string{"javascript:alert(1)", "https://github.com.evil/x", "https://user@github.com/a", "//evil/x"} {
 		if SafeGitHubURL(raw) != "" {
-			t.Errorf("unsafe URL accepted %q", raw)
+			t.Errorf("unsafe URL %q", raw)
 		}
 	}
 }

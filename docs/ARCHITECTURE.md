@@ -8,15 +8,16 @@ flowchart LR
     PS --> C[Consumer mode]
     C -->|transactional event state| DB[(PostgreSQL)]
     DB -->|LISTEN / NOTIFY| W[Web mode]
-    W -->|server-sent events| B[Browser]
-    B -->|HTMX fragment refresh| W
-    B -.->|30-second fallback refresh| W
+    W -->|rendered dashboard HTML over SSE| B[Browser]
+    B -->|client-side duration ticks| B
 ```
 
 The consumer reads workflow events already published to a configured Pub/Sub subscription. It allows eight in-flight messages while serializing payload decoding to bound transient memory, and acknowledges each message only after its database transaction commits. It handles `workflow_run` and `workflow_job` deliveries, deduplicates delivery IDs, and applies ordered state updates transactionally. Job-only deliveries can create provisional run rows until an authoritative workflow event arrives. The system observes webhook activity; it does not fetch historical runs or query GitHub to reconcile missed deliveries. A missed event can therefore leave a run's displayed state stale.
 
-PostgreSQL stores each run attempt and its job details. The dashboard displays only the latest attempt for each repository and workflow run, includes job and step details inline, and retains completed history for seven days. Active work is kept visible even if it becomes stale. The consumer periodically removes expired completed runs and old delivery-deduplication records.
+PostgreSQL stores each run attempt and its job details. The dashboard displays only the latest attempt for each repository and workflow run. Completed records remain in the database for seven days, while the board shows non-failure terminal outcomes (including success, cancelled, skipped, and neutral) for ten minutes and failures for 24 hours. Active work remains visible even when its events stop changing. The consumer periodically removes expired completed runs and old delivery-deduplication records.
 
-When a committed update sends PostgreSQL `NOTIFY`, the web mode's dedicated `LISTEN` connection signals connected browsers through server-sent events (SSE). The browser uses HTMX to request an updated dashboard fragment. A 30-second periodic refresh recovers missed notifications, and the SSE stream reconnects after connection loss.
+When a committed update sends PostgreSQL `NOTIFY`, the web mode's dedicated `LISTEN` connection schedules a snapshot and renders the board for connected browsers. An SSE event carries a JSON envelope containing the rendered HTML and repository list; the browser does not make a follow-up GET to refresh the board. Notifications are coalesced for 500 milliseconds, and the server sends a fresh snapshot every 30 seconds to advance display windows and recover from lost notifications. Run durations tick locally in the browser between updates.
 
-The UI, CSS, small browser helper, and HTMX 2.0.11 are embedded in the Go binary and served locally. No third-party script is loaded from a CDN. HTMX is vendored under the Zero-Clause BSD terms in [`static/htmx.LICENSE`](../internal/web/static/htmx.LICENSE). The implementation follows the [HTMX documentation](https://htmx.org/docs/) for fragment requests and the [GitHub webhook event and payload reference](https://docs.github.com/en/webhooks/webhook-events-and-payloads) for event payloads.
+The dashboard keeps the repository selector and run-details modal outside the live-updated board; HTMX swaps only the board. It presents four workflow groups: queued runs, running runs, non-failure completions from the last ten minutes, and failed runs from the last 24 hours. Workflow counts and queued/running job counts are shown separately. Queued and running jobs are grouped by their requested runner-label sets, sorted for consistent grouping; counts do not identify individual assigned runner hosts. A run's details open in a modal.
+
+The UI, CSS, browser helper, and HTMX 2.0.11 are embedded in the Go binary and served locally. No third-party script is loaded from a CDN. HTMX is vendored under the Zero-Clause BSD terms in [`static/htmx.LICENSE`](../internal/web/static/htmx.LICENSE). The implementation follows the [HTMX documentation](https://htmx.org/docs/) and the [GitHub webhook event and payload reference](https://docs.github.com/en/webhooks/webhook-events-and-payloads).

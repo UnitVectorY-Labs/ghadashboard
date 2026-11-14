@@ -15,7 +15,7 @@ Use managed PostgreSQL and Google Cloud credentials such as workload identity. G
 
 The dashboard shows events received by its subscription. It does not backfill from GitHub or reconcile missed events, so delivery gaps may leave a run stale. Use the run link in GitHub to confirm the live state. Completed records and delivery deduplication entries expire after seven days; active records remain available for diagnosis.
 
-The dashboard receives change signals through PostgreSQL notifications and SSE. The browser also refreshes the dashboard fragment every 30 seconds to recover missed signals. Monitor database availability and Pub/Sub delivery/retry behavior alongside `/readyz`.
+PostgreSQL notifications cause web instances to coalesce changes for 500 milliseconds, then push a JSON SSE event containing rendered board HTML. Web instances also send snapshots every 30 seconds to advance the time windows and recover missed notifications; the browser does not poll the board with GET requests. The repository selector and run-details modal stay outside the board, and run durations tick locally. Monitor database availability, SSE connectivity, and Pub/Sub delivery/retry behavior alongside `/readyz`.
 
 ## Tests
 

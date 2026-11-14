@@ -1,10 +1,11 @@
-// Package web serves the dashboard and committed-change event stream.
+// Package web serves the dashboard and a stream of rendered board updates.
 package web
 
 import (
 	"bytes"
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -25,19 +26,16 @@ type Source interface {
 	Snapshot(context.Context, string) (store.Snapshot, error)
 	Listen(context.Context, func()) error
 }
-
 type Server struct {
 	source    Source
 	templates *template.Template
 	mu        sync.Mutex
 	clients   map[chan struct{}]struct{}
 }
-
 type page struct {
 	Snapshot                           store.Snapshot
-	Repo                               string
+	Repo, Version                      string
 	Running, Queued, Failed, Completed []store.Run
-	Version                            string
 }
 
 func New(source Source, version string) *Server {
@@ -50,9 +48,17 @@ func New(source Source, version string) *Server {
 			}
 			return t.UTC().Format("15:04:05 UTC")
 		},
+		"iso": func(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) },
 		"short": func(s string) string {
 			if len(s) > 7 {
 				return s[:7]
+			}
+			return s
+		},
+		"leaf": func(s string) string {
+			_, name, found := strings.Cut(s, "/")
+			if found {
+				return name
 			}
 			return s
 		},
@@ -62,32 +68,41 @@ func New(source Source, version string) *Server {
 			}
 			return r.Status
 		},
-		"duration": func(r store.Run) string {
-			start := r.CreatedAt
-			if r.StartedAt != nil {
-				start = *r.StartedAt
+		"clockStart": func(r store.Run) time.Time {
+			if r.Status == "queued" || r.Status == "waiting" || r.Status == "pending" || r.Status == "requested" || r.StartedAt == nil {
+				return r.CreatedAt
 			}
-			end := time.Now()
+			return *r.StartedAt
+		},
+		"finished": func(r store.Run) time.Time {
 			if r.CompletedAt != nil {
-				end = *r.CompletedAt
+				return *r.CompletedAt
 			}
-			d := end.Sub(start)
-			if d < 0 {
-				d = 0
+			return r.UpdatedAt
+		},
+		"jobSummary": func(jobs []store.Job) string {
+			done := 0
+			for _, j := range jobs {
+				if j.Status == "completed" {
+					done++
+				}
 			}
-			return d.Round(time.Second).String()
+			if len(jobs) == 0 {
+				return "Jobs pending"
+			}
+			return fmt.Sprintf("%d/%d jobs done", done, len(jobs))
 		},
 	}
 	return &Server{source: source, templates: template.Must(template.New("dashboard").Funcs(funcs).ParseFS(assets, "templates.html")), clients: make(map[chan struct{}]struct{})}
 }
-
 func (s *Server) Handler(version string) http.Handler {
 	mux := http.NewServeMux()
 	static, _ := fs.Sub(assets, "static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
 	mux.HandleFunc("GET /events", s.events)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { s.render(w, r, "page", version) })
-	mux.HandleFunc("GET /dashboard", func(w http.ResponseWriter, r *http.Request) { s.render(w, r, "dashboard", version) })
+	// A normal HTML fragment endpoint is useful for diagnostics and no-JS clients.
+	mux.HandleFunc("GET /dashboard", func(w http.ResponseWriter, r *http.Request) { s.render(w, r, "board", version) })
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
@@ -96,7 +111,6 @@ func (s *Server) Handler(version string) http.Handler {
 		mux.ServeHTTP(w, r)
 	})
 }
-
 func (s *Server) Run(ctx context.Context) error { return s.source.Listen(ctx, s.broadcast) }
 func (s *Server) broadcast() {
 	s.mu.Lock()
@@ -108,50 +122,57 @@ func (s *Server) broadcast() {
 		}
 	}
 }
-func (s *Server) render(w http.ResponseWriter, r *http.Request, name, version string) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+func (s *Server) load(ctx context.Context, repo, version string) (page, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	repo := r.URL.Query().Get("repo")
-	if len(repo) > 300 {
-		http.Error(w, "invalid repository", http.StatusBadRequest)
-		return
-	}
 	snap, err := s.source.Snapshot(ctx, repo)
 	if err != nil {
-		slog.Error("dashboard query failed")
-		http.Error(w, "Dashboard temporarily unavailable. Retry shortly.", http.StatusServiceUnavailable)
-		return
+		return page{}, err
 	}
 	p := page{Snapshot: snap, Repo: repo, Version: version}
 	for _, run := range snap.Runs {
 		switch {
-		case run.Status != "completed" && run.Status != "in_progress":
-			p.Queued = append(p.Queued, run)
 		case run.Status == "in_progress":
 			p.Running = append(p.Running, run)
-		case failed(run.Conclusion):
+		case run.Status != "completed":
+			p.Queued = append(p.Queued, run)
+		case store.Failure(run.Conclusion):
 			p.Failed = append(p.Failed, run)
 		default:
 			p.Completed = append(p.Completed, run)
 		}
 	}
+	return p, nil
+}
+func (s *Server) render(w http.ResponseWriter, r *http.Request, name, version string) {
+	repo := r.URL.Query().Get("repo")
+	if len(repo) > 300 {
+		http.Error(w, "invalid repository", 400)
+		return
+	}
+	p, err := s.load(r.Context(), repo, version)
+	if err != nil {
+		slog.Error("dashboard query failed")
+		http.Error(w, "Dashboard temporarily unavailable. Retry shortly.", 503)
+		return
+	}
 	var b bytes.Buffer
-	if err := s.templates.ExecuteTemplate(&b, name, p); err != nil {
-		slog.Error("dashboard render failed")
+	if s.templates.ExecuteTemplate(&b, name, p) != nil {
 		http.Error(w, "Dashboard temporarily unavailable.", 500)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = b.WriteTo(w)
 }
-func failed(s string) bool {
-	return s == "failure" || s == "timed_out" || s == "action_required" || s == "startup_failure"
-}
-
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	f, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "Streaming unavailable", 500)
+		return
+	}
+	repo := r.URL.Query().Get("repo")
+	if len(repo) > 300 {
+		http.Error(w, "invalid repository", 400)
 		return
 	}
 	c := make(chan struct{}, 1)
@@ -161,37 +182,68 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	defer func() { s.mu.Lock(); delete(s.clients, c); s.mu.Unlock() }()
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("X-Accel-Buffering", "no")
-	send := func(message string) bool {
+	send := func(event string, data []byte) bool {
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(10 * time.Second))
-		_, err := fmt.Fprint(w, message)
+		_, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
 		if err != nil {
 			return false
 		}
 		f.Flush()
 		return true
 	}
-	if !send("event: change\ndata: refresh\n\n") {
+	snapshot := func() bool {
+		p, err := s.load(r.Context(), repo, "")
+		if err != nil {
+			return send("unavailable", []byte(`{}`))
+		}
+		var b bytes.Buffer
+		if s.templates.ExecuteTemplate(&b, "board", p) != nil {
+			return send("unavailable", []byte(`{}`))
+		}
+		data, err := json.Marshal(struct {
+			HTML         string   `json:"html"`
+			Repositories []string `json:"repositories"`
+		}{b.String(), p.Snapshot.Repositories})
+		return err == nil && send("dashboard", data)
+	}
+	if !snapshot() {
 		return
 	}
+	cadence := time.NewTicker(500 * time.Millisecond)
+	defer cadence.Stop()
+	resync := time.NewTicker(30 * time.Second)
+	defer resync.Stop()
 	heartbeat := time.NewTicker(20 * time.Second)
 	defer heartbeat.Stop()
+	pending := false
 	for {
 		select {
 		case <-r.Context().Done():
 			return
 		case <-c:
-			if !send("event: change\ndata: refresh\n\n") {
+			pending = true
+		case <-cadence.C:
+			if pending {
+				pending = false
+				if !snapshot() {
+					return
+				}
+			}
+		case <-resync.C:
+			if !snapshot() {
 				return
 			}
 		case <-heartbeat.C:
-			if !send(": heartbeat\n\n") {
+			_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if _, err := fmt.Fprint(w, ": heartbeat\n\n"); err != nil {
 				return
 			}
+			f.Flush()
 		}
 	}
 }
 
-// SafeGitHubURL restricts navigation to GitHub. Webhook URLs are never fetched.
+// SafeGitHubURL restricts navigation to GitHub. Payload URLs are never fetched.
 func SafeGitHubURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Host, "github.com") || u.User != nil {

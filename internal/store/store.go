@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -19,14 +21,29 @@ type Run = events.Run
 type Job = events.Job
 type Step = events.Step
 
+// WorkerType groups jobs by their requested runner labels, not an individual
+// assigned runner name. Label order and duplicate labels do not split groups.
+type WorkerType struct {
+	Name           string
+	Labels         []string
+	Queued         int
+	Running        int
+	OldestQueuedAt *time.Time
+}
+
 type Snapshot struct {
-	Runs         []Run
-	Repositories []string
-	UpdatedAt    time.Time
-	LastEventAt  *time.Time
-	Queued       int
-	Running      int
-	Failed       int
+	Runs           []Run
+	Repositories   []string
+	UpdatedAt      time.Time
+	LastEventAt    *time.Time
+	Queued         int
+	Running        int
+	Failed         int
+	Completed      int
+	QueuedJobs     int
+	RunningJobs    int
+	OldestQueuedAt *time.Time
+	WorkerTypes    []WorkerType
 }
 
 type Store struct {
@@ -173,8 +190,10 @@ WHERE (dashboard_jobs.state_rank < 3 AND EXCLUDED.state_rank = 3) OR
 	return tx.Commit(ctx)
 }
 
-// Snapshot selects every active latest attempt and up to 100 recent failures
-// plus 100 other completed runs. Counts include all matching latest attempts.
+// Snapshot selects all active latest attempts, up to 100 failures from the
+// last 24 hours, and up to 100 other completions from the last ten minutes.
+// Counts include every matching latest attempt within its display window.
+// Stored retention is independent of these display windows.
 func (s *Store) Snapshot(ctx context.Context, repo string) (Snapshot, error) {
 	out := Snapshot{UpdatedAt: time.Now().UTC(), Runs: []Run{}, Repositories: []string{}}
 	// Repeatable read keeps run state, job details and counters consistent.
@@ -204,12 +223,13 @@ func (s *Store) Snapshot(ctx context.Context, repo string) (Snapshot, error) {
 	}
 	rows, err = tx.Query(ctx, `WITH latest AS (SELECT DISTINCT ON(repository,run_id) * FROM dashboard_runs WHERE ($1='' OR repository=$1) ORDER BY repository,run_id,attempt DESC)
 SELECT document,authoritative,COALESCE((SELECT jsonb_agg(j.document ORDER BY j.job_id) FROM dashboard_jobs j WHERE j.repository=r.repository AND j.run_id=r.run_id AND j.attempt=r.attempt),'[]'::jsonb)
-FROM latest r WHERE status<>'completed' OR event_time >= $2 ORDER BY event_time DESC`, repo, time.Now().Add(-s.retentionPeriod()))
+FROM latest r WHERE status<>'completed' OR event_time >= $2 ORDER BY event_time DESC`, repo, out.UpdatedAt.Add(-24*time.Hour))
 	if err != nil {
 		return out, err
 	}
 	defer rows.Close()
 	failures, completed := 0, 0
+	workerTypes := make(map[string]*WorkerType)
 	for rows.Next() {
 		var raw, jobs []byte
 		var authoritative bool
@@ -223,26 +243,72 @@ FROM latest r WHERE status<>'completed' OR event_time >= $2 ORDER BY event_time 
 		if !authoritative {
 			deriveJobState(&r)
 		}
-		switch r.Status {
-		case "in_progress":
-			out.Running++
-		case "completed":
-			if Failure(r.Conclusion) {
-				out.Failed++
-			}
-		default:
-			out.Queued++
-		}
 		if r.Status == "completed" {
+			finishedAt := r.UpdatedAt
+			if r.CompletedAt != nil {
+				finishedAt = *r.CompletedAt
+			}
 			if Failure(r.Conclusion) {
+				if finishedAt.Before(out.UpdatedAt.Add(-24 * time.Hour)) {
+					continue
+				}
+				out.Failed++
 				failures++
 				if failures > 100 {
 					continue
 				}
 			} else {
+				if finishedAt.Before(out.UpdatedAt.Add(-10 * time.Minute)) {
+					continue
+				}
+				out.Completed++
 				completed++
 				if completed > 100 {
 					continue
+				}
+			}
+		} else {
+			if r.Status == "in_progress" {
+				out.Running++
+			} else {
+				out.Queued++
+			}
+			// A completed workflow is authoritative even when a terminal job
+			// delivery was missed; its stale observed jobs cannot be active.
+			for _, job := range r.Jobs {
+				queued := false
+				switch job.Status {
+				case "in_progress":
+					out.RunningJobs++
+				case "queued", "waiting", "pending", "requested":
+					queued = true
+					out.QueuedJobs++
+					queuedAt := job.CreatedAt
+					if !queuedAt.IsZero() && (out.OldestQueuedAt == nil || queuedAt.Before(*out.OldestQueuedAt)) {
+						out.OldestQueuedAt = &queuedAt
+					}
+				default:
+					continue
+				}
+				labels := canonicalLabels(job.Labels)
+				key, _ := json.Marshal(labels)
+				worker := workerTypes[string(key)]
+				if worker == nil {
+					name := strings.Join(labels, ", ")
+					if name == "" {
+						name = "Unreported"
+					}
+					worker = &WorkerType{Name: name, Labels: labels}
+					workerTypes[string(key)] = worker
+				}
+				if queued {
+					worker.Queued++
+					queuedAt := job.CreatedAt
+					if !queuedAt.IsZero() && (worker.OldestQueuedAt == nil || queuedAt.Before(*worker.OldestQueuedAt)) {
+						worker.OldestQueuedAt = &queuedAt
+					}
+				} else {
+					worker.Running++
 				}
 			}
 		}
@@ -252,7 +318,29 @@ FROM latest r WHERE status<>'completed' OR event_time >= $2 ORDER BY event_time 
 		return out, rows.Err()
 	}
 	rows.Close()
+	for _, worker := range workerTypes {
+		out.WorkerTypes = append(out.WorkerTypes, *worker)
+	}
+	sort.Slice(out.WorkerTypes, func(i, j int) bool {
+		if out.WorkerTypes[i].Name == out.WorkerTypes[j].Name {
+			return strings.Join(out.WorkerTypes[i].Labels, "\x00") < strings.Join(out.WorkerTypes[j].Labels, "\x00")
+		}
+		return out.WorkerTypes[i].Name < out.WorkerTypes[j].Name
+	})
 	return out, tx.Commit(ctx)
+}
+
+func canonicalLabels(labels []string) []string {
+	unique := make(map[string]bool, len(labels))
+	canonical := make([]string, 0, len(labels))
+	for _, label := range labels {
+		if label != "" && !unique[label] {
+			unique[label] = true
+			canonical = append(canonical, label)
+		}
+	}
+	sort.Strings(canonical)
+	return canonical
 }
 
 func Failure(conclusion string) bool {
