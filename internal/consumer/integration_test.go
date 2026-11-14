@@ -69,7 +69,7 @@ func TestSubscriberRetriesThenAcknowledgesCommittedState(t *testing.T) {
 	go func() { done <- Run(runCtx, db, "ghadashboard-test", sub.ID()) }()
 	encoder, _ := zstd.NewWriter(nil)
 	defer encoder.Close()
-	payload := []byte(`{"action":"completed","repository":{"full_name":"org/repo"},"workflow_run":{"id":101,"run_attempt":1,"name":"CI","status":"completed","conclusion":"failure"}}`)
+	payload := []byte(`{"action":"completed","repository":{"full_name":"org/repo"},"workflow_run":{"repository":{"id":456,"name":"repo","full_name":"org/repo","owner":{"login":"org"}},"head_repository":{"id":789,"name":"fork","full_name":"contributor/fork","owner":{"login":"contributor"}},"actor":{"login":"author"},"id":101,"run_attempt":1,"name":"CI","status":"completed","conclusion":"failure"}}`)
 	id := emulator.Publish(topic.String(), encoder.EncodeAll(payload, nil), map[string]string{"gh_event": "workflow_run", "gh_delivery": "integration-valid", "compression": "zstd"})
 	wait := func(reason string, check func() bool) {
 		t.Helper()
@@ -109,7 +109,7 @@ func TestSubscriberRetriesThenAcknowledgesCommittedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Failed != 1 || len(snapshot.Runs) != 1 || snapshot.Runs[0].ID != 101 {
+	if snapshot.Failed != 1 || len(snapshot.Runs) != 1 || snapshot.Runs[0].ID != 101 || snapshot.Runs[0].Repository != "org/repo" || snapshot.Runs[0].Actor != "author" {
 		t.Fatalf("ACK without expected durable state: %+v", snapshot)
 	}
 	badID := emulator.Publish(topic.String(), []byte("invalid-secret-body"), map[string]string{"gh_event": "workflow_run"})

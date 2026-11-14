@@ -11,7 +11,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-const runPayload = `{"action":"completed","repository":{"full_name":"org/repo"},"sender":{"login":"sender"},"workflow_run":{"id":12,"run_attempt":2,"run_number":5,"name":"Build","display_title":"Build PR","head_branch":"main","head_sha":"abc","status":"completed","conclusion":"failure","html_url":"https://github.com/org/repo/actions/runs/12","actor":{"login":"author"},"created_at":"2026-01-01T01:00:00Z","updated_at":"2026-01-01T01:01:00Z"}}`
+const runPayload = `{"action":"completed","repository":{"full_name":"org/repo"},"sender":{"login":"sender"},"workflow_run":{"id":12,"run_attempt":2,"run_number":5,"name":"Build","display_title":"Build PR","head_branch":"main","head_sha":"abc","status":"completed","conclusion":"failure","html_url":"https://github.com/org/repo/actions/runs/12","actor":{"login":"author"},"repository":{"id":456,"name":"repo","full_name":"org/repo","owner":{"login":"org"}},"head_repository":{"id":789,"name":"fork","full_name":"contributor/fork","owner":{"login":"contributor"}},"created_at":"2026-01-01T01:00:00Z","updated_at":"2026-01-01T01:01:00Z"}}`
 
 func TestDecodeCompressionAndForm(t *testing.T) {
 	for _, compression := range []string{"none", "gzip", "zstd", "form"} {
@@ -37,7 +37,7 @@ func TestDecodeCompressionAndForm(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if e.Run.ID != 12 || e.Run.Attempt != 2 || e.Run.Actor != "author" || e.Run.CompletedAt == nil || e.Run.Status != "completed" {
+			if e.Run.ID != 12 || e.Run.Attempt != 2 || e.Run.Actor != "author" || e.Run.Repository != "org/repo" || e.Run.CompletedAt == nil || e.Run.Status != "completed" {
 				t.Fatalf("unexpected state: %+v", e.Run)
 			}
 		})
@@ -45,7 +45,7 @@ func TestDecodeCompressionAndForm(t *testing.T) {
 }
 
 func TestDecodeJobsAndStableFallbackDelivery(t *testing.T) {
-	payload := []byte(`{"action":"queued","repository":{"full_name":"org/repo"},"workflow_job":{"id":42,"run_id":12,"run_attempt":3,"status":"queued","html_url":"javascript:alert(1)","labels":["self-hosted"],"steps":[{"number":1,"name":"Checkout","status":"pending"}]}}`)
+	payload := []byte(`{"action":"queued","repository":{"full_name":"org/repo"},"workflow_job":{"repository":{"full_name":"nested/ignored","owner":{"login":"nested"}},"id":42,"run_id":12,"run_attempt":3,"status":"queued","html_url":"javascript:alert(1)","labels":["self-hosted"],"steps":[{"number":1,"name":"Checkout","status":"pending"}]}}`)
 	a, err := Decode(payload, map[string]string{"gh_event": "workflow_job"}, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +54,7 @@ func TestDecodeJobsAndStableFallbackDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.DeliveryID != b.DeliveryID || a.Job.RunID != 12 || a.Job.Attempt != 3 || a.Job.HTMLURL != "" || len(a.Job.Steps) != 1 {
+	if a.DeliveryID != b.DeliveryID || a.Job.RunID != 12 || a.Job.Attempt != 3 || a.Job.HTMLURL != "" || a.Job.Repository != "org/repo" || len(a.Job.Steps) != 1 {
 		t.Fatalf("unexpected job: %+v", a.Job)
 	}
 }

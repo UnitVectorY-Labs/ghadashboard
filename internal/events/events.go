@@ -124,8 +124,18 @@ func Decode(data []byte, attrs map[string]string, published time.Time) (Event, e
 		Repository struct {
 			FullName string `json:"full_name"`
 		} `json:"repository"`
-		Run    *Run `json:"workflow_run"`
-		Job    *Job `json:"workflow_job"`
+		// Storage documents deliberately keep repository as a canonical string.
+		// GitHub sends nested repository objects; shadow those storage-only
+		// fields at the wire boundary rather than decoding into storage types.
+		Run *struct {
+			Run
+			Repository json.RawMessage `json:"repository"`
+			Jobs       json.RawMessage `json:"jobs"`
+		} `json:"workflow_run"`
+		Job *struct {
+			Job
+			Repository json.RawMessage `json:"repository"`
+		} `json:"workflow_job"`
 		Sender struct {
 			Login string `json:"login"`
 		} `json:"sender"`
@@ -152,10 +162,10 @@ func Decode(data []byte, attrs map[string]string, published time.Time) (Event, e
 		event.DeliveryID = hex.EncodeToString(sum[:])
 	}
 	if event.Type == "workflow_run" {
-		r := payload.Run
-		if r == nil || r.ID <= 0 {
+		if payload.Run == nil || payload.Run.ID <= 0 {
 			return event, errors.New("missing run identity")
 		}
+		r := &payload.Run.Run
 		r.Repository, r.Actor = payload.Repository.FullName, payload.Sender.Login
 		// Actor identifies the workflow initiator rather than the webhook sender.
 		var actor struct {
@@ -201,10 +211,10 @@ func Decode(data []byte, attrs map[string]string, published time.Time) (Event, e
 		r.HTMLURL = SafeURL(r.HTMLURL)
 		event.Run = r
 	} else {
-		j := payload.Job
-		if j == nil || j.ID <= 0 || j.RunID <= 0 {
+		if payload.Job == nil || payload.Job.ID <= 0 || payload.Job.RunID <= 0 {
 			return event, errors.New("missing job identity")
 		}
+		j := &payload.Job.Job
 		j.Repository = payload.Repository.FullName
 		if j.Attempt < 1 {
 			j.Attempt = 1

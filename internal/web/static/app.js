@@ -7,8 +7,11 @@ let pending;
 stream.onopen = () => { status.textContent = 'Live'; status.dataset.state = 'live'; };
 stream.onerror = () => { status.textContent = 'Reconnecting'; status.dataset.state = 'offline'; };
 stream.addEventListener('change', () => {
-  clearTimeout(pending);
-  pending = setTimeout(() => htmx.trigger(document.body, 'workflow-change'), 150);
+  if (pending) return;
+  pending = setTimeout(() => {
+    pending = null;
+    htmx.trigger(document.body, 'workflow-change');
+  }, 500);
 });
 // Keep the selected repository in the URL without navigating away from live updates.
 document.body.addEventListener('change', event => {
