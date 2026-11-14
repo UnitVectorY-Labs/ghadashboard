@@ -35,6 +35,7 @@ type Server struct {
 	clients      map[chan struct{}]struct{}
 }
 type page struct {
+	IsStats                            bool
 	Snapshot                           store.Snapshot
 	Repo, Version, Organization        string
 	Running, Queued, Failed, Completed []store.Run
@@ -92,6 +93,7 @@ func (s *Server) Handler(version string) http.Handler {
 	static, _ := fs.Sub(assets, "static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
 	mux.HandleFunc("GET /events", s.events)
+	mux.HandleFunc("GET /stats", func(w http.ResponseWriter, r *http.Request) { s.statistics(w, r, version) })
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { s.render(w, r, "page", version) })
 	// A normal HTML fragment endpoint is useful for diagnostics and no-JS clients.
 	mux.HandleFunc("GET /dashboard", func(w http.ResponseWriter, r *http.Request) { s.render(w, r, "board", version) })

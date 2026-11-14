@@ -115,11 +115,25 @@ CREATE TABLE IF NOT EXISTS dashboard_jobs (
 CREATE TABLE IF NOT EXISTS dashboard_deliveries (
  delivery_id text PRIMARY KEY, received_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS statistics_runs (
+ repository text NOT NULL, run_id bigint NOT NULL, attempt integer NOT NULL,
+ event_time timestamptz NOT NULL, state_rank integer NOT NULL, document jsonb NOT NULL,
+ PRIMARY KEY(repository,run_id,attempt)
+);
+CREATE TABLE IF NOT EXISTS statistics_jobs (
+ repository text NOT NULL, run_id bigint NOT NULL, attempt integer NOT NULL, job_id bigint NOT NULL,
+ event_time timestamptz NOT NULL, state_rank integer NOT NULL, document jsonb NOT NULL,
+ PRIMARY KEY(repository,run_id,attempt,job_id)
+);
+CREATE INDEX IF NOT EXISTS statistics_jobs_run ON statistics_jobs(repository,run_id,attempt);
 CREATE INDEX IF NOT EXISTS dashboard_runs_active ON dashboard_runs(status, event_time DESC);
 CREATE INDEX IF NOT EXISTS dashboard_runs_recent ON dashboard_runs(event_time DESC);
 CREATE INDEX IF NOT EXISTS dashboard_deliveries_received ON dashboard_deliveries(received_at);
 `)
 	if err != nil {
+		return err
+	}
+	if err := archiveStatistics(ctx, tx, "", 0, 0); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -183,6 +197,17 @@ WHERE (dashboard_jobs.state_rank < 3 AND EXCLUDED.state_rank = 3) OR
 		if err != nil {
 			return err
 		}
+	}
+	var repository string
+	var runID int64
+	var attempt int
+	if event.Run != nil {
+		repository, runID, attempt = event.Run.Repository, event.Run.ID, event.Run.Attempt
+	} else {
+		repository, runID, attempt = event.Job.Repository, event.Job.RunID, event.Job.Attempt
+	}
+	if err := archiveStatistics(ctx, tx, repository, runID, attempt); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(ctx, `SELECT pg_notify('ghadashboard_changes','')`); err != nil {
 		return err

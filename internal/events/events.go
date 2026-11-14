@@ -33,6 +33,7 @@ type Run struct {
 	Attempt      int        `json:"run_attempt"`
 	Number       int64      `json:"run_number"`
 	Name         string     `json:"name"`
+	Path         string     `json:"path"`
 	DisplayTitle string     `json:"display_title"`
 	Branch       string     `json:"head_branch"`
 	SHA          string     `json:"head_sha"`

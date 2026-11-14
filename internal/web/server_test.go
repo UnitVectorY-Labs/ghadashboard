@@ -207,3 +207,24 @@ func TestDashboardRunOrdering(t *testing.T) {
 		})
 	}
 }
+
+type statsSource struct{ fakeSource }
+
+func (s *statsSource) Statistics(context.Context, string) (store.Statistics, error) {
+	now := time.Now()
+	start := now.Add(-time.Minute)
+	end := now
+	return store.Statistics{UpdatedAt: now, Since: now.Add(-24 * time.Hour), Runs: []store.Run{{Repository: "org/repo", ID: 1, Attempt: 1, Name: "Build", Status: "completed", Conclusion: "failure", CreatedAt: start, StartedAt: &start, CompletedAt: &end}}, Jobs: []store.Job{{Repository: "org/repo", RunID: 1, Attempt: 1, RunnerName: "<runner>", Status: "completed", Conclusion: "failure", CreatedAt: start, StartedAt: &start, CompletedAt: &end}}}, nil
+}
+func TestStatisticsPageIsStaticAndEscaped(t *testing.T) {
+	s := New(&statsSource{}, "test", "Organization")
+	w := httptest.NewRecorder()
+	s.Handler("test").ServeHTTP(w, httptest.NewRequest("GET", "/stats?tab=workers", nil))
+	body := w.Body.String()
+	if w.Code != 200 || !strings.Contains(body, "&lt;runner&gt;") || !strings.Contains(body, "Refresh this page") {
+		t.Fatalf("bad statistics page: %d %s", w.Code, body)
+	}
+	if strings.Contains(body, "app.js") || strings.Contains(body, "htmx") || strings.Contains(body, `id="board"`) {
+		t.Fatal("statistics page includes live dashboard machinery")
+	}
+}
