@@ -61,7 +61,7 @@ func (s *Server) statistics(w http.ResponseWriter, r *http.Request, version stri
 	}
 	period := q.Get("range")
 	if period == "" {
-		period = "30d"
+		period = "24h"
 	}
 	days := map[string]int{"24h": 1, "7d": 7, "30d": 30, "90d": 90, "all": 0}
 	if _, ok := days[period]; !ok {
@@ -70,7 +70,7 @@ func (s *Server) statistics(w http.ResponseWriter, r *http.Request, version stri
 	}
 	tab := q.Get("tab")
 	if tab == "" {
-		tab = "overview"
+		tab = "workers"
 	}
 	if tab != "overview" && tab != "repositories" && tab != "workflows" && tab != "workers" {
 		http.Error(w, "invalid view", 400)
