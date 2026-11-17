@@ -312,7 +312,7 @@ func TestSnapshotWorkerTypesCanonicalLabelsAndActiveAttempts(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	applyRun := func(id int64, attempt int, status string) {
 		t.Helper()
-		if err := s.Apply(ctx, events.Event{DeliveryID: fmt.Sprintf("worker-run-%d-%d", id, attempt), Run: &Run{Repository: "org/repo", ID: id, Attempt: attempt, Status: status, CreatedAt: now, UpdatedAt: now}}); err != nil {
+		if err := s.Apply(ctx, events.Event{DeliveryID: fmt.Sprintf("worker-run-%d-%d", id, attempt), Run: &Run{Repository: "org/repo", ID: id, Attempt: attempt, Name: fmt.Sprintf("Workflow %d", id), Status: status, CreatedAt: now, UpdatedAt: now}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -323,6 +323,7 @@ func TestSnapshotWorkerTypesCanonicalLabelsAndActiveAttempts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Distinct workflows keep terminal runs from superseding one another.
 	applyRun(1, 1, "in_progress")
 	applyRun(2, 1, "completed")
 	applyRun(3, 1, "in_progress")
@@ -336,6 +337,12 @@ func TestSnapshotWorkerTypesCanonicalLabelsAndActiveAttempts(t *testing.T) {
 	applyJob(7, 2, 1, "in_progress", []string{"completed-parent"}, time.Minute)
 	applyJob(8, 3, 1, "queued", []string{"superseded-attempt"}, time.Minute)
 	applyJob(9, 3, 2, "pending", []string{"arc-runner-set"}, time.Minute)
+	applyJob(10, 2, 1, "completed", []string{"ubuntu-latest"}, time.Minute)
+	if err := s.Apply(ctx, events.Event{DeliveryID: "failed-worker-run", Run: &Run{Repository: "org/repo", ID: 4, Attempt: 1, Name: "Failed workflow", Status: "completed", Conclusion: "failure", CreatedAt: now, UpdatedAt: now}}); err != nil {
+		t.Fatal(err)
+	}
+	applyJob(11, 4, 1, "completed", []string{"ubuntu-latest"}, time.Minute)
+
 	snapshot, err := s.Snapshot(ctx, "org/repo")
 	if err != nil {
 		t.Fatal(err)
@@ -347,6 +354,9 @@ func TestSnapshotWorkerTypesCanonicalLabelsAndActiveAttempts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotNames, wantNames) {
 		t.Fatalf("worker groups/order: %v", gotNames)
+	}
+	if worker := snapshot.WorkerTypes[3]; worker.Completed != 1 || worker.Failed != 1 {
+		t.Fatalf("terminal worker counts: %+v", worker)
 	}
 	selfHosted := snapshot.WorkerTypes[0]
 	if !reflect.DeepEqual(selfHosted.Labels, []string{"ARM64", "Linux", "self-hosted"}) || selfHosted.Queued != 2 || selfHosted.Running != 1 || selfHosted.OldestQueuedAt == nil || !selfHosted.OldestQueuedAt.Equal(now.Add(-8*time.Minute)) {

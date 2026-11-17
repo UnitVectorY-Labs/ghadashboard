@@ -28,6 +28,8 @@ type WorkerType struct {
 	Labels         []string
 	Queued         int
 	Running        int
+	Completed      int
+	Failed         int
 	OldestQueuedAt *time.Time
 }
 
@@ -259,6 +261,29 @@ FROM current_state r WHERE status<>'completed' OR (event_time >= $2 AND run_id=n
 	defer rows.Close()
 	failures, completed := 0, 0
 	workerTypes := make(map[string]*WorkerType)
+	workerForJob := func(job Job) *WorkerType {
+		labels := canonicalLabels(job.Labels)
+		key, _ := json.Marshal(labels)
+		worker := workerTypes[string(key)]
+		if worker == nil {
+			worker = &WorkerType{Name: WorkerTypeName(labels), Labels: labels}
+			workerTypes[string(key)] = worker
+		}
+		return worker
+	}
+	observeFinishedJobs := func(r Run) {
+		for _, job := range r.Jobs {
+			if job.Status != "completed" {
+				continue
+			}
+			worker := workerForJob(job)
+			if Failure(r.Conclusion) {
+				worker.Failed++
+			} else {
+				worker.Completed++
+			}
+		}
+	}
 	for rows.Next() {
 		var raw, jobs []byte
 		var authoritative bool
@@ -282,6 +307,7 @@ FROM current_state r WHERE status<>'completed' OR (event_time >= $2 AND run_id=n
 					continue
 				}
 				out.Failed++
+				observeFinishedJobs(r)
 				failures++
 				if failures > 100 {
 					continue
@@ -291,6 +317,7 @@ FROM current_state r WHERE status<>'completed' OR (event_time >= $2 AND run_id=n
 					continue
 				}
 				out.Completed++
+				observeFinishedJobs(r)
 				completed++
 				if completed > 100 {
 					continue
@@ -319,14 +346,7 @@ FROM current_state r WHERE status<>'completed' OR (event_time >= $2 AND run_id=n
 				default:
 					continue
 				}
-				labels := canonicalLabels(job.Labels)
-				key, _ := json.Marshal(labels)
-				worker := workerTypes[string(key)]
-				if worker == nil {
-					name := WorkerTypeName(labels)
-					worker = &WorkerType{Name: name, Labels: labels}
-					workerTypes[string(key)] = worker
-				}
+				worker := workerForJob(job)
 				if queued {
 					worker.Queued++
 					queuedAt := job.CreatedAt

@@ -36,7 +36,7 @@ func (f *fakeSource) Listen(ctx context.Context, fn func()) error {
 }
 func TestDashboardRenderingAndFiltering(t *testing.T) {
 	now := time.Now().UTC()
-	src := &fakeSource{snapshot: store.Snapshot{UpdatedAt: now, Repositories: []string{"org/repo"}, Running: 1, RunningJobs: 1, QueuedJobs: 2, Failed: 1, OldestQueuedAt: &now, WorkerTypes: []store.WorkerType{{Name: "ubuntu-latest", Queued: 2, Running: 1}}, Runs: []store.Run{
+	src := &fakeSource{snapshot: store.Snapshot{UpdatedAt: now, Repositories: []string{"org/repo"}, Running: 1, RunningJobs: 1, QueuedJobs: 2, Failed: 1, OldestQueuedAt: &now, WorkerTypes: []store.WorkerType{{Name: "ubuntu-latest", Queued: 2, Running: 1, Completed: 3, Failed: 4}}, Runs: []store.Run{
 		{ID: 101, Attempt: 1, Repository: "org/repo", Name: "<script>alert(1)</script>", Status: "in_progress", CreatedAt: now, HTMLURL: "javascript:alert(1)", Jobs: []store.Job{{Name: "build", Status: "queued", StartedAt: &now}}},
 		{ID: 102, Attempt: 2, Repository: "org/repo", Name: "Failed run", Status: "completed", Conclusion: "failure", CreatedAt: now},
 	}}}
@@ -54,6 +54,9 @@ func TestDashboardRenderingAndFiltering(t *testing.T) {
 	}
 	if strings.Contains(body, "javascript:") || strings.Contains(body, "<script>alert(1)") {
 		t.Fatal("unsafe webhook content")
+	}
+	if strings.Contains(body, "Oldest ") || strings.Count(body, `title="ubuntu-latest"`) != 4 {
+		t.Fatal("runner summaries must appear in every lane without oldest queue text")
 	}
 	if src.repo != "org/repo" {
 		t.Fatal("filter not passed")

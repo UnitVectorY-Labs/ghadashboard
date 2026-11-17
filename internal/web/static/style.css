@@ -80,3 +80,7 @@ header{justify-content:flex-start;gap:14px}.header-controls{margin-left:auto}
 /* Keep the legend focused on plotted values; dates are already on the axis. */
 .statistics .u-legend tbody>.u-series:first-child{display:none}
 .mini-value{min-width:0}.mini-values.single-summary .mini-value-label{display:none}.mini-values .mini-value-label{font-size:12px;color:var(--muted)}
+
+/* Reserve the same runner row in each desktop column. */
+.worker-type-empty{visibility:hidden}
+@media(max-width:850px){.worker-type-empty{display:none}}
