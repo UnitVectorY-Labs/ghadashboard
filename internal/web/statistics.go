@@ -312,9 +312,6 @@ func buildStatsPageWithList(stats store.Statistics, repo, workflow, worker, peri
 			if m == "p95" {
 				v = percentile95(bucketWaits)
 			}
-			if (m == "queue" || m == "p95") && total.QueueSamples == 0 {
-				v = nil
-			}
 			chart.Metrics[m][0] = append(chart.Metrics[m][0], v)
 		}
 	}

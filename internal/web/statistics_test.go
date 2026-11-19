@@ -159,9 +159,11 @@ func TestAdaptiveBucketsAndMatchingSparklines(t *testing.T) {
 		if test.period != "all" && chart.Time[1]-chart.Time[0] != int64(test.step.Seconds()) {
 			t.Fatalf("bad step for %s", test.period)
 		}
-		for _, v := range chart.Metrics["rate"][0] {
-			if v == nil {
-				t.Fatal("rate must be zero-filled")
+		for _, metric := range []string{"rate", "queue", "p95"} {
+			for i, v := range chart.Metrics[metric][0] {
+				if v == nil || (chart.Metrics["runs"][0][i] == float64(0) && v != float64(0)) {
+					t.Fatalf("%s must be zero-filled for %s at bucket %d: %v", metric, test.period, i, v)
+				}
 			}
 		}
 		if len(p.Rows) != 1 || len(p.Rows[0].Cells) != 4 {
@@ -214,7 +216,7 @@ func TestQueuePercentileUsesRawSamplesAndFilters(t *testing.T) {
 	if err := json.Unmarshal([]byte(p.Chart), &chart); err != nil {
 		t.Fatal(err)
 	}
-	if chart.Metrics["p95"][0][22] != float64(1) || chart.Metrics["p95"][0][23] != float64(100) || chart.Metrics["p95"][0][0] != nil {
+	if chart.Metrics["p95"][0][22] != float64(1) || chart.Metrics["p95"][0][23] != float64(100) || chart.Metrics["p95"][0][0] != float64(0) {
 		t.Fatal("incorrect percentile buckets")
 	}
 	slow := buildStatsPageWithList(stats, "", "", "slow", "24h", "workers", "", "runs", 1)
