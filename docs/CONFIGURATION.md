@@ -17,7 +17,7 @@ The consumer uses the Google Cloud default credential chain, such as workload id
 
 ## Dashboard display
 
-The dashboard supports light and dark themes that follow the system appearance by default, including system changes while the page is open. A manual selection overrides the system appearance and is saved in a `theme` cookie for one year. The footer always credits UnitVectorY Labs, independently of the configured organization subtitle.
+The dashboard supports light and dark themes that follow the system appearance by default, including system changes while the page is open. A manual selection overrides the system appearance and is saved in a `uvy-theme` cookie for one year. The footer always credits UnitVectorY-Labs, independently of the configured organization subtitle.
 
 The searchable repository picker and run-details modal remain outside the live-updated board. The connection dot is green when connected and red otherwise; hover or focus it for connection details. Completed and failed headings reveal their time windows in themed tooltips on hover or keyboard focus. The board separates queued and running workflows, non-failure terminal outcomes from the last ten minutes, and failures from the last 24 hours. Completed database history is retained for seven days. Queued and running lanes show job counts; completed and failed lanes show workflow counts. Job breakdowns group requested runner-label sets (sorted for consistent grouping), not individual assigned runner hosts. Selecting a run opens its details in a modal.
 

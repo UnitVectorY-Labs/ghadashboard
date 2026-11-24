@@ -116,7 +116,11 @@ func (s *Server) statistics(w http.ResponseWriter, r *http.Request, version stri
 	p.Organization = s.organization
 	p.Version = version
 	var b bytes.Buffer
-	if err := s.templates.ExecuteTemplate(&b, "statistics", p); err != nil {
+	tmpl := "statistics"
+	if r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-Target") == "stats-breakdown-region" {
+		tmpl = "stats-breakdown-hx"
+	}
+	if err := s.templates.ExecuteTemplate(&b, tmpl, p); err != nil {
 		http.Error(w, "Statistics temporarily unavailable.", 500)
 		return
 	}

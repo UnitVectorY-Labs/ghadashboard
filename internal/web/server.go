@@ -71,6 +71,20 @@ func New(source Source, version, organization string) *Server {
 			}
 			return r.Status
 		},
+		"statusClass": func(status string) string {
+			switch status {
+			case "success":
+				return "uvy-status uvy-status--ok"
+			case "failure", "timed_out", "action_required", "startup_failure":
+				return "uvy-status uvy-status--danger"
+			case "in_progress":
+				return "uvy-status uvy-status--info uvy-status--running"
+			case "queued", "waiting", "pending", "requested", "cancelled":
+				return "uvy-status uvy-status--warn"
+			default:
+				return "uvy-status"
+			}
+		},
 		"clockStart": runClockStart,
 		"finished":   runFinishedAt,
 		"jobSummary": func(jobs []store.Job) string {

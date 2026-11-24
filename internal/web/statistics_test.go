@@ -59,7 +59,7 @@ func TestStatisticsSharesChrome(t *testing.T) {
 	for _, path := range []string{"/", "/stats"} {
 		w := httptest.NewRecorder()
 		s.Handler("test-version").ServeHTTP(w, httptest.NewRequest("GET", path, nil))
-		for _, text := range []string{`class="brand-title"`, `id="theme-toggle"`, `aria-label="Main navigation"`, `<footer>`, `test-version`, `Organization`, `/static/chrome.js`} {
+		for _, text := range []string{`class="uvy-mark"`, `id="theme"`, `aria-label="Main navigation"`, `class="site-footer`, `Version test-version`, `Organization`, `/static/uvy.css`, `/static/uvy.js`, `UnitVectorY-Labs`} {
 			if !strings.Contains(w.Body.String(), text) {
 				t.Errorf("%s missing %s", path, text)
 			}
