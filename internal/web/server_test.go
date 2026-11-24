@@ -152,7 +152,7 @@ func TestEventStreamPushesRenderedFilteredContent(t *testing.T) {
 }
 func TestAssetsAndURLs(t *testing.T) {
 	s := New(&fakeSource{}, "v", "Test Organization")
-	for _, path := range []string{"/static/htmx.min.js", "/static/style.css", "/static/app.js"} {
+	for _, path := range []string{"/static/htmx.min.js", "/static/uvy.css", "/static/uvy.js", "/static/style.css", "/static/app.js", "/static/uvy-standalone-mark-light.svg", "/static/uvy-standalone-mark-dark.svg"} {
 		w := httptest.NewRecorder()
 		s.Handler("v").ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Code != 200 || w.Body.Len() == 0 {
@@ -227,7 +227,17 @@ func TestStatisticsPageIsStaticAndEscaped(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(body, "&lt;runner&gt;") || !strings.Contains(body, "Refresh this page") {
 		t.Fatalf("bad statistics page: %d %s", w.Code, body)
 	}
-	if strings.Contains(body, "app.js") || strings.Contains(body, "htmx") || strings.Contains(body, `id="board"`) {
+	if strings.Contains(body, "app.js") || strings.Contains(body, "/events") || strings.Contains(body, `id="board"`) {
 		t.Fatal("statistics page includes live dashboard machinery")
+	}
+	// HTMX requests targeting the breakdown region return only the partial plus OOB tab input.
+	req := httptest.NewRequest("GET", "/stats?tab=repositories", nil)
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Target", "stats-breakdown-region")
+	w = httptest.NewRecorder()
+	s.Handler("test").ServeHTTP(w, req)
+	frag := w.Body.String()
+	if w.Code != 200 || strings.Contains(frag, "<!doctype") || !strings.Contains(frag, `hx-swap-oob="outerHTML"`) || !strings.Contains(frag, "org/repo") {
+		t.Fatalf("bad breakdown fragment: %d %s", w.Code, frag)
 	}
 }

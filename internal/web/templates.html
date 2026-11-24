@@ -1,111 +1,437 @@
-{{define "page"}}<!doctype html><html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false}'><title>GitHub Actions Dashboard{{if .Organization}} · {{.Organization}}{{end}}</title><script src="/static/theme.js"></script><link rel="stylesheet" href="/static/style.css"><script src="/static/htmx.min.js" defer></script><script src="/static/chrome.js" defer></script><script src="/static/app.js" defer></script></head>
-<body><div class="shell">{{template "header" .}}
-<form class="toolbar" action="/" method="get"><input type="hidden" id="repository" name="repo" value="{{.Repo}}"><details class="repo-picker" id="repo-picker"><summary id="repo-picker-label">{{if .Repo}}{{.Repo}}{{else}}All repositories{{end}}<span aria-hidden="true">⌄</span></summary><div class="repo-menu"><label class="sr-only" for="repo-search">Search repositories</label><input type="search" id="repo-search" placeholder="Find a repository…" autocomplete="off"><div id="repo-options"><button type="button" data-repo="" aria-pressed="{{if .Repo}}false{{else}}true{{end}}">All repositories</button>{{range .Snapshot.Repositories}}<button type="button" data-repo="{{.}}" aria-pressed="{{if eq . $.Repo}}true{{else}}false{{end}}">{{.}}</button>{{end}}</div><p id="repo-empty" hidden>No repositories found</p></div></details><noscript><p>Repositories: <a href="/">All</a>{{range .Snapshot.Repositories}} · <a href="/?repo={{urlquery .}}">{{.}}</a>{{end}}</p></noscript></form>
-{{template "board" .}}
-{{template "footer" .}}</div>
-<dialog id="run-modal" aria-labelledby="modal-title"><div class="modal-top"><h2 id="modal-title">Workflow details</h2><button type="button" id="close-modal" aria-label="Close details">×</button></div><div id="modal-content"></div></dialog>
-</body></html>{{end}}
-{{define "board"}}<main id="board" data-updated="{{iso .Snapshot.UpdatedAt}}">
-<section class="lane queued"><div class="lane-heading"><div class="lane-label"><i></i><h1>Queued</h1></div><div class="count">{{.Snapshot.QueuedJobs}} <span>jobs</span></div><div class="worker-types">{{range .Snapshot.WorkerTypes}}{{template "worker-queued" .}}{{end}}</div></div><div class="cards">{{range .Queued}}{{template "card" .}}{{else}}{{if .Snapshot.QueuedJobs}}<p class="empty">{{.Snapshot.QueuedJobs}} queued jobs belong to running workflows.</p>{{else}}<p class="empty">Queue Empty</p>{{end}}{{end}}</div></section>
-<section class="lane running"><div class="lane-heading"><div class="lane-label"><i></i><h1>Running</h1></div><div class="count">{{.Snapshot.RunningJobs}} <span>jobs</span></div><div class="worker-types">{{range .Snapshot.WorkerTypes}}{{template "worker-running" .}}{{end}}</div></div><div class="cards">{{range .Running}}{{template "card" .}}{{else}}<p class="empty">Nothing Running</p>{{end}}</div></section>
-<section class="lane completed"><div class="lane-heading"><div class="lane-label"><i></i><h1 class="tooltip-anchor" tabindex="0" aria-describedby="completed-window">Completed<span class="tooltip" id="completed-window" role="tooltip">Completed workflows from the last 10 minutes</span></h1></div><div class="count">{{.Snapshot.Completed}} <span>workflows</span></div><div class="worker-types">{{range .Snapshot.WorkerTypes}}{{template "worker-completed" .}}{{end}}</div></div><div class="cards">{{range .Completed}}{{template "card" .}}{{else}}<p class="empty">No Recent Completions</p>{{end}}</div></section>
-<section class="lane failed"><div class="lane-heading"><div class="lane-label"><i></i><h1 class="tooltip-anchor" tabindex="0" aria-describedby="failed-window">Failed<span class="tooltip" id="failed-window" role="tooltip">Failed workflows from the last 24 hours</span></h1></div><div class="count">{{.Snapshot.Failed}} <span>workflows</span></div><div class="worker-types">{{range .Snapshot.WorkerTypes}}{{template "worker-failed" .}}{{end}}</div></div><div class="cards">{{range .Failed}}{{template "card" .}}{{else}}<p class="empty">No Recent Failures</p>{{end}}</div></section>
-{{if not .Snapshot.LastEventAt}}<p class="coverage">Waiting for the first webhook event.</p>{{end}}</main>{{end}}
-{{define "card"}}<button class="run-card" type="button" data-run="run-{{.ID}}-{{.Attempt}}" aria-label="Details for {{.Repository}}: {{.Name}}"><span class="card-top"><strong title="{{.Repository}}">{{leaf .Repository}}</strong>{{if eq .Status "completed"}}<time data-clock="ago" datetime="{{iso (finished .)}}"></time>{{else}}<time data-clock="elapsed" datetime="{{iso (clockStart .)}}"></time>{{end}}</span><span class="workflow" title="{{.Name}}">{{if .Name}}{{.Name}}{{else}}Workflow #{{.ID}}{{end}}</span><span class="card-meta"><span title="Branch">{{.Branch}}</span><span>{{if eq .Status "completed"}}{{.Conclusion}}{{else}}{{jobSummary .Jobs}}{{end}}</span></span></button>
+{{define "icons"}}<!-- Tabler Icons: https://tabler.io/icons
+MIT License
+
+Copyright (c) 2020-2026 Paweł Kuna
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" class="sr-only" aria-hidden="true" focusable="false">
+  <symbol id="tabler-moon" viewBox="0 0 24 24">
+    <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008" />
+  </symbol>
+  <symbol id="tabler-sun" viewBox="0 0 24 24">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" />
+  </symbol>
+  <symbol id="tabler-x" viewBox="0 0 24 24">
+    <path d="M18 6l-12 12" />
+    <path d="M6 6l12 12" />
+  </symbol>
+  <symbol id="tabler-chevron-down" viewBox="0 0 24 24">
+    <path d="M6 9l6 6l6 -6" />
+  </symbol>
+  <symbol id="tabler-chevron-left" viewBox="0 0 24 24">
+    <path d="M15 6l-6 6l6 6" />
+  </symbol>
+  <symbol id="tabler-chevron-right" viewBox="0 0 24 24">
+    <path d="M9 6l6 6l-6 6" />
+  </symbol>
+  <symbol id="tabler-external-link" viewBox="0 0 24 24">
+    <path d="M12 6h-6a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-6" />
+    <path d="M11 13l9 -9" />
+    <path d="M15 4h5v5" />
+  </symbol>
+</svg>{{end}}
+
+{{define "brand-mark"}}<svg class="uvy-mark" aria-hidden="true" width="28" height="28" viewBox="0 0 100 100">
+  <g stroke-width="4" stroke-linejoin="round">
+    <polygon class="uvy-mark__top" points="50,8 82.5,26.75 50,45.5 17.5,26.75" />
+    <polygon class="uvy-mark__left" points="12.3,35.75 44.8,54.5 44.8,92 12.3,73.25" />
+    <polygon class="uvy-mark__right" points="55.2,54.5 87.7,35.75 87.7,73.25 55.2,92" />
+  </g>
+</svg>{{end}}
+
+{{define "header"}}<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="header-inner">
+    {{template "icons"}}
+    <div class="header-identity">
+      {{if not .IsStats}}<h1>{{end}}<a class="brand" href="/">{{template "brand-mark"}}<span>GitHub Actions Dashboard</span></a>{{if not .IsStats}}</h1>{{end}}
+      {{if .Organization}}<span class="header-org">{{.Organization}}</span>{{end}}
+      <span class="connection-indicator tooltip-anchor" tabindex="0" aria-describedby="connection-tip">
+        <span id="connection" role="status" aria-label="{{if .IsStats}}Snapshot view{{else}}Connecting{{end}}" data-state="{{if .IsStats}}snapshot{{else}}connecting{{end}}"></span>
+        <span class="tooltip" id="connection-tip" role="tooltip">{{if .IsStats}}Snapshot view · refresh to update{{else}}Connecting{{end}}</span>
+      </span>
+    </div>
+    <nav aria-label="Main navigation">
+      <a href="/" {{if not .IsStats}}aria-current="page"{{end}}>Dashboard</a>
+      <a href="/stats" {{if .IsStats}}aria-current="page"{{end}}>Statistics</a>
+    </nav>
+    <button id="theme" class="icon-button" type="button" aria-label="Switch color theme" hidden>
+      <svg class="icon" aria-hidden="true" data-icon="moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-moon"></use></svg>
+      <svg class="icon" aria-hidden="true" data-icon="sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-sun"></use></svg>
+    </button>
+  </div>
+</header>{{end}}
+
+{{define "footer"}}<footer class="site-footer">
+  <div class="footer-inner">
+    <p>
+      <a href="https://github.com/UnitVectorY-Labs">UnitVectorY-Labs</a>
+      <span class="footer-sep" aria-hidden="true">|</span>
+      <a href="https://github.com/UnitVectorY-Labs/ghadashboard/blob/main/LICENSE">MIT License</a>
+      <span class="footer-sep" aria-hidden="true">|</span>
+      <a href="https://github.com/UnitVectorY-Labs/ghadashboard"><strong>ghadashboard</strong></a> on GitHub
+    </p>
+    {{if .Version}}<p class="version">Version {{.Version}}</p>{{end}}
+  </div>
+</footer>{{end}}
+
+{{define "page"}}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false}'>
+  <title>GitHub Actions Dashboard{{if .Organization}} · {{.Organization}}{{end}}</title>
+  <link rel="icon" type="image/svg+xml" href="/static/uvy-standalone-mark-light.svg" media="(prefers-color-scheme: light)">
+  <link rel="icon" type="image/svg+xml" href="/static/uvy-standalone-mark-dark.svg" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="/static/uvy.css">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/uvy.js"></script>
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body class="page-dashboard">
+  {{template "header" .}}
+  <div id="main" class="page dashboard-shell">
+    <form class="toolbar uvy-toolbar" action="/" method="get">
+      <input type="hidden" id="repository" name="repo" value="{{.Repo}}">
+      <details class="repo-picker" id="repo-picker">
+        <summary id="repo-picker-label">{{if .Repo}}{{.Repo}}{{else}}All repositories{{end}}<svg class="icon icon-small icon-muted" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-chevron-down"></use></svg></summary>
+        <div class="repo-menu">
+          <label class="sr-only" for="repo-search">Search repositories</label>
+          <input type="search" id="repo-search" class="uvy-input--mono" placeholder="Find a repository…" autocomplete="off">
+          <div id="repo-options">
+            <button type="button" data-repo="" aria-pressed="{{if .Repo}}false{{else}}true{{end}}">All repositories</button>
+            {{range .Snapshot.Repositories}}<button type="button" data-repo="{{.}}" aria-pressed="{{if eq . $.Repo}}true{{else}}false{{end}}">{{.}}</button>{{end}}
+          </div>
+          <p id="repo-empty" class="uvy-hint" hidden>No repositories found.</p>
+        </div>
+      </details>
+      <noscript><p class="uvy-hint">Repositories: <a href="/">All</a>{{range .Snapshot.Repositories}} · <a href="/?repo={{urlquery .}}">{{.}}</a>{{end}}</p></noscript>
+    </form>
+    {{template "board" .}}
+  </div>
+  {{template "footer" .}}
+  <dialog id="run-modal" aria-labelledby="modal-title">
+    <div class="uvy-dialog__header">
+      <h2 id="modal-title">Workflow details</h2>
+      <button type="button" id="close-modal" class="icon-button" aria-label="Close details" title="Close details">
+        <svg class="icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-x"></use></svg>
+      </button>
+    </div>
+    <div id="modal-content" class="uvy-dialog__body"></div>
+  </dialog>
+</body>
+</html>{{end}}
+
+{{define "board"}}<main id="board" class="board" data-updated="{{iso .Snapshot.UpdatedAt}}">
+  <section class="lane queued">
+    <div class="lane-heading">
+      <div class="lane-label"><i aria-hidden="true"></i><h2>Queued</h2></div>
+      <div class="count">{{.Snapshot.QueuedJobs}} <span>jobs</span></div>
+      <div class="worker-types">{{range .Snapshot.WorkerTypes}}{{template "worker-queued" .}}{{end}}</div>
+    </div>
+    <div class="cards">
+      {{range .Queued}}{{template "card" .}}{{else}}{{if .Snapshot.QueuedJobs}}<p class="empty">{{.Snapshot.QueuedJobs}} queued jobs belong to running workflows.</p>{{else}}<p class="empty">Queue empty</p>{{end}}{{end}}
+    </div>
+  </section>
+  <section class="lane running">
+    <div class="lane-heading">
+      <div class="lane-label"><i aria-hidden="true"></i><h2>Running</h2></div>
+      <div class="count">{{.Snapshot.RunningJobs}} <span>jobs</span></div>
+      <div class="worker-types">{{range .Snapshot.WorkerTypes}}{{template "worker-running" .}}{{end}}</div>
+    </div>
+    <div class="cards">
+      {{range .Running}}{{template "card" .}}{{else}}<p class="empty">Nothing running</p>{{end}}
+    </div>
+  </section>
+  <section class="lane completed">
+    <div class="lane-heading">
+      <div class="lane-label"><i aria-hidden="true"></i><h2 class="tooltip-anchor" tabindex="0" aria-describedby="completed-window">Completed<span class="tooltip" id="completed-window" role="tooltip">Completed workflows from the last 10 minutes</span></h2></div>
+      <div class="count">{{.Snapshot.Completed}} <span>workflows</span></div>
+      <div class="worker-types">{{range .Snapshot.WorkerTypes}}{{template "worker-completed" .}}{{end}}</div>
+    </div>
+    <div class="cards">
+      {{range .Completed}}{{template "card" .}}{{else}}<p class="empty">No recent completions</p>{{end}}
+    </div>
+  </section>
+  <section class="lane failed">
+    <div class="lane-heading">
+      <div class="lane-label"><i aria-hidden="true"></i><h2 class="tooltip-anchor" tabindex="0" aria-describedby="failed-window">Failed<span class="tooltip" id="failed-window" role="tooltip">Failed workflows from the last 24 hours</span></h2></div>
+      <div class="count">{{.Snapshot.Failed}} <span>workflows</span></div>
+      <div class="worker-types">{{range .Snapshot.WorkerTypes}}{{template "worker-failed" .}}{{end}}</div>
+    </div>
+    <div class="cards">
+      {{range .Failed}}{{template "card" .}}{{else}}<p class="empty">No recent failures</p>{{end}}
+    </div>
+  </section>
+  {{if not .Snapshot.LastEventAt}}<p class="coverage uvy-hint">Waiting for the first webhook event.</p>{{end}}
+</main>{{end}}
+
+{{define "card"}}<button class="run-card" type="button" data-run="run-{{.ID}}-{{.Attempt}}" aria-label="Details for {{.Repository}}: {{.Name}}">
+  <span class="card-top">
+    <strong title="{{.Repository}}">{{leaf .Repository}}</strong>
+    {{if eq .Status "completed"}}<time data-clock="ago" datetime="{{iso (finished .)}}"></time>{{else}}<time data-clock="elapsed" datetime="{{iso (clockStart .)}}"></time>{{end}}
+  </span>
+  <span class="workflow" title="{{.Name}}">{{if .Name}}{{.Name}}{{else}}Workflow #{{.ID}}{{end}}</span>
+  <span class="card-meta">
+    <span title="Branch">{{.Branch}}</span>
+    <span>{{if eq .Status "completed"}}{{.Conclusion}}{{else}}{{jobSummary .Jobs}}{{end}}</span>
+  </span>
+</button>
 <template id="run-{{.ID}}-{{.Attempt}}">{{template "details" .}}</template>{{end}}
-{{define "details"}}<div class="run-detail"><div class="detail-context"><span>{{.Repository}}</span><span class="badge {{state .}}">{{state .}}</span></div><h3>{{if .Name}}{{.Name}}{{else}}Workflow #{{.ID}}{{end}}</h3>{{if .DisplayTitle}}<p class="display-title">{{.DisplayTitle}}</p>{{end}}<div class="detail-meta"><span>{{.Branch}} · <code>{{short .SHA}}</code></span><span>#{{.Number}} · attempt {{.Attempt}}</span><span>{{.Event}}{{if .Actor}} · {{.Actor}}{{end}}</span></div><a class="github-link" href="{{safeURL .HTMLURL}}" target="_blank" rel="noopener noreferrer">Open run on GitHub ↗</a><div class="run-times"><span>Created <b>{{stamp .CreatedAt}}</b></span><span>Started <b>{{when .StartedAt}}</b></span><span>Completed <b>{{when .CompletedAt}}</b></span></div><h4>Jobs <span>{{len .Jobs}}</span></h4>{{range .Jobs}}<section class="job"><div class="job-heading"><a href="{{safeURL .HTMLURL}}" target="_blank" rel="noopener noreferrer">{{.Name}} ↗</a><span class="badge">{{if .Conclusion}}{{.Conclusion}}{{else}}{{.Status}}{{end}}</span></div><div class="job-meta">{{if .RunnerName}}{{.RunnerName}} · {{end}}{{if and .StartedAt (not .CompletedAt)}}<time data-clock="elapsed" datetime="{{iso .StartedAt}}"></time>{{else}}{{when .StartedAt}} → {{when .CompletedAt}}{{end}}</div>{{if .Labels}}<div class="labels">{{range .Labels}}<span>{{.}}</span>{{end}}</div>{{end}}{{if .Steps}}<ol class="steps">{{range .Steps}}<li><span>{{.Name}}</span><small>{{if .Conclusion}}{{.Conclusion}}{{else}}{{.Status}}{{end}}</small></li>{{end}}</ol>{{end}}</section>{{else}}<p class="empty">Waiting for job events.</p>{{end}}</div>{{end}}
 
-{{define "icon-workflow"}}<!--
-tags: [git, merge, branch, combine, version-control, vcs, github, gitlab, repository]
-category: Version control
-version: "1.0"
-unicode: "eab5"
--->
-<svg aria-hidden="true"
-  xmlns="http://www.w3.org/2000/svg"
-  width="24"
-  height="24"
-  viewBox="0 0 24 24"
-  fill="none"
-  stroke="currentColor"
-  stroke-width="2"
-  stroke-linecap="round"
-  stroke-linejoin="round"
->
-  <path d="M5 18a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" />
-  <path d="M5 6a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" />
-  <path d="M15 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" />
-  <path d="M7 8l0 8" />
-  <path d="M7 8a4 4 0 0 0 4 4h4" />
-</svg>{{end}}
+{{define "details"}}<div class="run-detail">
+  <div class="detail-context">
+    <span class="uvy-mono">{{.Repository}}</span>
+    <span class="{{statusClass (state .)}}">{{state .}}</span>
+  </div>
+  <h3>{{if .Name}}{{.Name}}{{else}}Workflow #{{.ID}}{{end}}</h3>
+  {{if .DisplayTitle}}<p class="display-title">{{.DisplayTitle}}</p>{{end}}
+  <div class="detail-actions">
+    <a class="uvy-button uvy-button--small" href="{{safeURL .HTMLURL}}" target="_blank" rel="noopener noreferrer">
+      <svg class="icon icon-small" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-external-link"></use></svg>
+      Open run on GitHub
+    </a>
+  </div>
+  <dl class="uvy-kv">
+    <div><dt>Branch &amp; commit</dt><dd><span class="uvy-mono">{{.Branch}}</span> · <code>{{short .SHA}}</code></dd></div>
+    <div><dt>Run</dt><dd class="uvy-mono">#{{.Number}} · attempt {{.Attempt}}</dd></div>
+    <div><dt>Trigger</dt><dd class="uvy-mono">{{.Event}}{{if .Actor}} · {{.Actor}}{{end}}</dd></div>
+    <div><dt>Created</dt><dd><time datetime="{{iso .CreatedAt}}">{{stamp .CreatedAt}}</time></dd></div>
+    <div><dt>Started</dt><dd>{{if .StartedAt}}<time datetime="{{iso .StartedAt}}">{{when .StartedAt}}</time>{{else}}<span class="uvy-unknown">—</span>{{end}}</dd></div>
+    <div><dt>Completed</dt><dd>{{if .CompletedAt}}<time datetime="{{iso .CompletedAt}}">{{when .CompletedAt}}</time>{{else}}<span class="uvy-unknown">—</span>{{end}}</dd></div>
+  </dl>
+  <div class="jobs-section">
+    <h4>Jobs <span class="uvy-count">{{len .Jobs}}</span></h4>
+    {{range .Jobs}}
+    <section class="job">
+      <div class="job-heading">
+        <a class="with-icon job-link" href="{{safeURL .HTMLURL}}" target="_blank" rel="noopener noreferrer">
+          <span>{{.Name}}</span>
+          <svg class="icon icon-small icon-muted" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-external-link"></use></svg>
+        </a>
+        {{$jobState := .Status}}{{if .Conclusion}}{{$jobState = .Conclusion}}{{end}}
+        <span class="{{statusClass $jobState}}">{{$jobState}}</span>
+      </div>
+      <div class="job-meta uvy-mono">{{if .RunnerName}}{{.RunnerName}} · {{end}}{{if and .StartedAt (not .CompletedAt)}}<time data-clock="elapsed" datetime="{{iso .StartedAt}}"></time>{{else}}{{when .StartedAt}} → {{when .CompletedAt}}{{end}}</div>
+      {{if .Labels}}<div class="labels">{{range .Labels}}<span class="uvy-badge">{{.}}</span>{{end}}</div>{{end}}
+      {{if .Steps}}<ol class="steps">{{range .Steps}}<li><span>{{.Name}}</span><small class="uvy-mono">{{if .Conclusion}}{{.Conclusion}}{{else}}{{.Status}}{{end}}</small></li>{{end}}</ol>{{end}}
+    </section>
+    {{else}}<p class="empty">Waiting for job events.</p>{{end}}
+  </div>
+</div>{{end}}
 
-{{define "icon-sun"}}<!--
-tags: [light-mode, light, theme, day, brightness, weather, sunny, bright, sun]
-category: Weather
-version: "1.0"
-unicode: "eb30"
--->
-<svg aria-hidden="true"
-  xmlns="http://www.w3.org/2000/svg"
-  width="24"
-  height="24"
-  viewBox="0 0 24 24"
-  fill="none"
-  stroke="currentColor"
-  stroke-width="2"
-  stroke-linecap="round"
-  stroke-linejoin="round"
->
-  <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
-  <path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" />
-</svg>{{end}}
+{{define "statistics"}}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false}'>
+  <title>Statistics · GitHub Actions Dashboard{{if .Organization}} · {{.Organization}}{{end}}</title>
+  <link rel="icon" type="image/svg+xml" href="/static/uvy-standalone-mark-light.svg" media="(prefers-color-scheme: light)">
+  <link rel="icon" type="image/svg+xml" href="/static/uvy-standalone-mark-dark.svg" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="/static/uvy.css">
+  <link rel="stylesheet" href="/static/uplot.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/uvy.js"></script>
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/uplot.min.js" defer></script>
+  <script src="/static/statistics.js" defer></script>
+</head>
+<body>
+  {{template "header" .}}
+  <main id="main" class="page statistics">
+    <div class="uvy-page-header stats-heading">
+      <div>
+        <h1>Actions statistics</h1>
+        <p class="uvy-lead">Performance, reliability, and where your runners spend their time.</p>
+      </div>
+      <div class="snapshot-note">
+        <span class="snapshot-stamp">Snapshot · <time datetime="{{iso .UpdatedAt}}">{{stamp .UpdatedAt}}</time></span>
+        <span>Refresh this page to update</span>
+      </div>
+    </div>
 
-{{define "icon-moon"}}<!--
-tags: [night, dark-mode, dark, theme, crescent, sleep, lunar, evening, moon]
-category: Weather
-version: "1.0"
-unicode: "eaf8"
--->
-<svg aria-hidden="true"
-  xmlns="http://www.w3.org/2000/svg"
-  width="24"
-  height="24"
-  viewBox="0 0 24 24"
-  fill="none"
-  stroke="currentColor"
-  stroke-width="2"
-  stroke-linecap="round"
-  stroke-linejoin="round"
->
-  <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008" />
-</svg>{{end}}
+    <form class="uvy-panel stats-filters" action="/stats" method="get">
+      <input type="hidden" id="stats-filter-tab" name="tab" value="{{.Tab}}">
+      <div class="uvy-field">
+        <label for="stats-range">Time frame</label>
+        <select id="stats-range" name="range">
+          <option value="24h" {{if eq .Range "24h"}}selected{{end}}>Last 24 hours</option>
+          <option value="7d" {{if eq .Range "7d"}}selected{{end}}>Last 7 days</option>
+          <option value="30d" {{if eq .Range "30d"}}selected{{end}}>Last 30 days</option>
+          <option value="90d" {{if eq .Range "90d"}}selected{{end}}>Last 90 days</option>
+          <option value="all" {{if eq .Range "all"}}selected{{end}}>All history</option>
+        </select>
+      </div>
+      <div class="uvy-field">
+        <label for="stats-repo">Repository</label>
+        <input id="stats-repo" class="uvy-input--mono" type="search" name="repo" list="stats-repositories" value="{{.Repo}}" placeholder="All repositories" autocomplete="off">
+        <datalist id="stats-repositories">{{range .Repositories}}<option value="{{.}}">{{end}}</datalist>
+      </div>
+      <div class="uvy-field">
+        <label for="stats-workflow">Workflow</label>
+        <input id="stats-workflow" class="uvy-input--mono" type="search" name="workflow" list="stats-workflows" value="{{.Workflow}}" placeholder="All workflows" autocomplete="off">
+        <datalist id="stats-workflows">{{range .Workflows}}<option value="{{.}}">{{end}}</datalist>
+      </div>
+      <div class="uvy-field">
+        <label for="stats-worker">Runner type</label>
+        <input id="stats-worker" class="uvy-input--mono" type="search" name="worker" list="stats-workers" value="{{.Worker}}" placeholder="All runner types" autocomplete="off">
+        <datalist id="stats-workers">{{range .Workers}}<option value="{{.}}">{{end}}</datalist>
+      </div>
+      <div class="stats-filter-actions">
+        <noscript><button class="uvy-button uvy-button--primary" type="submit">Apply filters</button></noscript>
+        <a class="uvy-button uvy-button--quiet" href="/stats">Reset</a>
+      </div>
+    </form>
 
+    <section class="stats-metrics stats-charts" data-charts="{{.Chart}}" aria-label="Historical trends">
+      {{range .ChartPanels}}
+      <article class="uvy-panel stats-panel">
+        <div class="stats-panel__top">
+          <h2>{{.Title}}</h2>
+          <span class="stats-unit">{{.Unit}}</span>
+        </div>
+        <div class="metric-summaries {{if eq (len .Metrics) 1}}single-summary{{end}}">
+          {{range .Metrics}}
+          <div class="metric-summary metric-{{.Key}}">
+            <span class="metric-summary-label"><i class="series-swatch{{if eq .Key "p95"}} series-swatch--dashed{{end}}" aria-hidden="true"></i>{{.Title}}</span>
+            <strong class="metric-value">{{$.MetricSummary .Key}}</strong>
+          </div>
+          {{end}}
+        </div>
+        <div class="trend-chart" data-metrics="{{.MetricKeys}}" role="img" aria-label="{{.Title}} over time"></div>
+      </article>
+      {{end}}
+    </section>
 
-{{define "header"}}<header><span class="connection-indicator tooltip-anchor" tabindex="0" aria-describedby="connection-tip"><span id="connection" role="status" aria-label="{{if .IsStats}}Snapshot view{{else}}Connecting{{end}}" data-state="{{if .IsStats}}snapshot{{else}}connecting{{end}}"></span><span class="tooltip" id="connection-tip" role="tooltip">{{if .IsStats}}Snapshot view · refresh to update{{else}}Connecting{{end}}</span></span><a class="brand" href="/"><span class="brand-title">{{template "icon-workflow"}}GitHub Actions Dashboard</span>{{if .Organization}}<span class="brand-subtitle">{{.Organization}}</span>{{end}}</a><div class="header-controls"><nav class="page-nav" aria-label="Main navigation"><a href="/" {{if not .IsStats}}aria-current="page"{{end}}>Dashboard</a><a href="/stats" {{if .IsStats}}aria-current="page"{{end}}>Statistics</a></nav><button type="button" id="theme-toggle" class="theme-toggle" aria-label="Switch to light mode"><span class="theme-sun">{{template "icon-sun"}}</span><span class="theme-moon">{{template "icon-moon"}}</span><span data-theme-label>Light mode</span></button></div></header>{{end}}
-{{define "footer"}}<footer><p><a href="https://github.com/UnitVectorY-Labs">UnitVectorY Labs</a><span aria-hidden="true"> | </span><a href="https://opensource.org/licenses/MIT">MIT License</a><span aria-hidden="true"> | </span><a href="https://github.com/UnitVectorY-Labs/ghadashboard"><strong>ghadashboard</strong> on GitHub</a></p><span class="version">{{.Version}}</span></footer>{{end}}
-{{define "statistics"}}<!doctype html><html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Statistics · GitHub Actions Dashboard{{if .Organization}} · {{.Organization}}{{end}}</title><script src="/static/theme.js"></script><link rel="stylesheet" href="/static/uplot.min.css"><link rel="stylesheet" href="/static/style.css"><script src="/static/chrome.js" defer></script><script src="/static/uplot.min.js" defer></script><script src="/static/statistics.js" defer></script></head><body><div class="shell">{{template "header" .}}
-<main class="statistics">
-<div class="stats-heading"><div><h1>Actions statistics</h1><p>Performance, reliability, and where your runners spend their time.</p></div><span class="snapshot-note">Snapshot · {{stamp .UpdatedAt}}<br>Refresh this page to update</span></div>
-<form class="stats-filters" action="/stats" method="get"><input type="hidden" name="tab" value="{{.Tab}}">
-<label>Time frame<select name="range"><option value="24h" {{if eq .Range "24h"}}selected{{end}}>Last 24 hours</option><option value="7d" {{if eq .Range "7d"}}selected{{end}}>Last 7 days</option><option value="30d" {{if eq .Range "30d"}}selected{{end}}>Last 30 days</option><option value="90d" {{if eq .Range "90d"}}selected{{end}}>Last 90 days</option><option value="all" {{if eq .Range "all"}}selected{{end}}>All history</option></select></label>
-<label>Repository<input type="search" name="repo" list="stats-repositories" value="{{.Repo}}" placeholder="All repositories" autocomplete="off"><datalist id="stats-repositories">{{range .Repositories}}<option value="{{.}}">{{end}}</datalist></label>
-<label>Workflow<input type="search" name="workflow" list="stats-workflows" value="{{.Workflow}}" placeholder="All workflows" autocomplete="off"><datalist id="stats-workflows">{{range .Workflows}}<option value="{{.}}">{{end}}</datalist></label>
-<label>Runner type<input type="search" name="worker" list="stats-workers" value="{{.Worker}}" placeholder="All runner types" autocomplete="off"><datalist id="stats-workers">{{range .Workers}}<option value="{{.}}">{{end}}</datalist></label><noscript><button class="stats-apply" type="submit">Apply filters</button></noscript><a href="/stats">Reset</a></form>
+    {{if not .Summary.Total}}
+    <div class="uvy-empty stats-empty">
+      <p>No jobs match these filters. Try a longer time frame or reset the active filters.</p>
+    </div>
+    {{end}}
 
+    <div id="stats-breakdown-region">{{template "stats-breakdown" .}}</div>
 
-<section class="stats-metrics stats-charts" data-charts="{{.Chart}}" aria-label="Historical trends">{{range .ChartPanels}}<article class="stats-panel"><h2>{{.Title}}</h2><div class="metric-summaries {{if eq (len .Metrics) 1}}single-summary{{end}}">{{range .Metrics}}<div class="metric-summary metric-{{.Key}}"><span class="metric-summary-label">{{.Title}}</span><strong class="metric-value">{{$.MetricSummary .Key}}</strong></div>{{end}}</div><p>{{.Unit}}</p><div class="trend-chart" data-metrics="{{.MetricKeys}}" role="img" aria-label="{{.Title}} over time"></div></article>{{end}}</section>
-{{if not .Summary.Total}}<p class="empty stats-empty">No jobs match these filters. Try a longer time frame or another filter.</p>{{end}}
-<nav class="stats-tabs" aria-label="Break down by"><span class="breakdown-label">Break down by</span><a href="{{.TabURL "workers"}}" {{if eq .Tab "workers"}}aria-current="page"{{end}}>Runner types</a><a href="{{.TabURL "repositories"}}" {{if eq .Tab "repositories"}}aria-current="page"{{end}}>Repositories</a><a href="{{.TabURL "workflows"}}" {{if eq .Tab "workflows"}}aria-current="page"{{end}}>Workflows</a></nav>
-{{if ne .Tab "overview"}}<section class="stats-breakdown" id="breakdown"><div class="breakdown-heading"><h2>{{if eq .Tab "repositories"}}Repositories{{else if eq .Tab "workflows"}}Workflows{{else}}Runner types{{end}} <small>{{.GroupCount}}</small></h2><form class="stats-list-controls" action="/stats" method="get"><input type="hidden" name="tab" value="{{.Tab}}"><input type="hidden" name="range" value="{{.Range}}"><input type="hidden" name="repo" value="{{.Repo}}"><input type="hidden" name="workflow" value="{{.Workflow}}"><input type="hidden" name="worker" value="{{.Worker}}"><label class="sr-only" for="stats-search">Search {{if eq .Tab "workers"}}runner types{{else}}{{.Tab}}{{end}}</label><input type="search" id="stats-search" name="search" value="{{.Search}}" placeholder="Search {{if eq .Tab "workers"}}runner types{{else}}{{.Tab}}{{end}}…"><label class="sr-only" for="stats-sort">Sort by</label><select id="stats-sort" name="sort"><option value="runs" {{if eq .Sort "runs"}}selected{{end}}>Most job runs</option><option value="execution" {{if eq .Sort "execution"}}selected{{end}}>Most execution time</option><option value="errors" {{if eq .Sort "errors"}}selected{{end}}>Most failed jobs</option><option value="queue" {{if eq .Sort "queue"}}selected{{end}}>Longest queue time</option><option value="rate" {{if eq .Sort "rate"}}selected{{end}}>Highest failure rate</option><option value="name" {{if eq .Sort "name"}}selected{{end}}>Name</option></select><noscript><button type="submit">Search</button></noscript></form></div>
-<div class="stats-group-list">{{range .Rows}}<article class="stats-group-row"><a class="stats-group-name" href="{{$.DrillURL .Name}}">{{.Name}} ↗</a><div class="stats-group-values">{{range .Cells}}<div class="stats-mini"><span>{{.Title}}</span><div class="mini-values {{if eq (len .Values) 1}}single-summary{{end}}">{{range .Values}}<div class="mini-value metric-{{.Key}}"><span class="mini-value-label">{{.Title}}</span><strong aria-label="{{.Title}}: {{.Value}}">{{.Value}}</strong></div>{{end}}</div><svg viewBox="0 0 120 34" preserveAspectRatio="none" role="img" aria-label="{{.Title}} trend">{{range .Lines}}<polyline class="metric-{{.Key}}" points="{{.Points}}" fill="none" stroke="currentColor" stroke-width="1.7" vector-effect="non-scaling-stroke"/>{{end}}</svg></div>{{end}}</div></article>{{else}}<p class="empty">No matches.</p>{{end}}</div>
+    <noscript><p class="uvy-hint">Enable JavaScript for trend charts. Summary metrics, filters, and breakdown details work without it.</p></noscript>
+  </main>
+  {{template "footer" .}}
+</body>
+</html>{{end}}
 
-{{if gt .Pages 1}}<nav class="stats-pagination" aria-label="Breakdown pages">{{if gt .Page 1}}<a href="{{.PageURL .PreviousPage}}">← Previous</a>{{end}}<span>Page {{.Page}} of {{.Pages}}</span>{{if lt .Page .Pages}}<a href="{{.PageURL .NextPage}}">Next →</a>{{end}}</nav>{{end}}</section>{{end}}
-<noscript><p>Enable JavaScript for trend charts. Summary metrics, filters, and breakdown details work without it.</p></noscript></main>{{template "footer" .}}</div></body></html>{{end}}
+{{define "stats-breakdown-hx"}}<input type="hidden" id="stats-filter-tab" name="tab" value="{{.Tab}}" hx-swap-oob="outerHTML">
+{{template "stats-breakdown" .}}{{end}}
+
+{{define "stats-breakdown"}}<nav class="uvy-tabs stats-tabs" aria-label="Break down by">
+      <span class="breakdown-label">Break down by</span>
+      <a href="{{.TabURL "workers"}}" hx-get="{{.TabURL "workers"}}" hx-target="#stats-breakdown-region" hx-swap="innerHTML show:none" hx-push-url="true" {{if eq .Tab "workers"}}aria-current="page"{{end}}>Runner types</a>
+      <a href="{{.TabURL "repositories"}}" hx-get="{{.TabURL "repositories"}}" hx-target="#stats-breakdown-region" hx-swap="innerHTML show:none" hx-push-url="true" {{if eq .Tab "repositories"}}aria-current="page"{{end}}>Repositories</a>
+      <a href="{{.TabURL "workflows"}}" hx-get="{{.TabURL "workflows"}}" hx-target="#stats-breakdown-region" hx-swap="innerHTML show:none" hx-push-url="true" {{if eq .Tab "workflows"}}aria-current="page"{{end}}>Workflows</a>
+    </nav>
+
+    {{if ne .Tab "overview"}}
+    <section class="stats-breakdown" id="breakdown">
+      <div class="breakdown-heading">
+        <h2>{{if eq .Tab "repositories"}}Repositories{{else if eq .Tab "workflows"}}Workflows{{else}}Runner types{{end}} <span class="uvy-count">{{.GroupCount}}</span></h2>
+        <form class="stats-list-controls" action="/stats" method="get" hx-get="/stats" hx-target="#stats-breakdown-region" hx-swap="innerHTML show:none" hx-push-url="true">
+          <input type="hidden" name="tab" value="{{.Tab}}">
+          <input type="hidden" name="range" value="{{.Range}}">
+          <input type="hidden" name="repo" value="{{.Repo}}">
+          <input type="hidden" name="workflow" value="{{.Workflow}}">
+          <input type="hidden" name="worker" value="{{.Worker}}">
+          <label class="sr-only" for="stats-search">Search {{if eq .Tab "workers"}}runner types{{else}}{{.Tab}}{{end}}</label>
+          <input type="search" id="stats-search" class="uvy-input--mono" name="search" value="{{.Search}}" placeholder="Search {{if eq .Tab "workers"}}runner types{{else}}{{.Tab}}{{end}}…">
+          <label class="sr-only" for="stats-sort">Sort by</label>
+          <select id="stats-sort" name="sort">
+            <option value="runs" {{if eq .Sort "runs"}}selected{{end}}>Most job runs</option>
+            <option value="execution" {{if eq .Sort "execution"}}selected{{end}}>Most execution time</option>
+            <option value="errors" {{if eq .Sort "errors"}}selected{{end}}>Most failed jobs</option>
+            <option value="queue" {{if eq .Sort "queue"}}selected{{end}}>Longest queue time</option>
+            <option value="rate" {{if eq .Sort "rate"}}selected{{end}}>Highest failure rate</option>
+            <option value="name" {{if eq .Sort "name"}}selected{{end}}>Name</option>
+          </select>
+          <noscript><button class="uvy-button" type="submit">Search</button></noscript>
+        </form>
+      </div>
+
+      {{if .Rows}}
+      <div class="uvy-panel stats-group-panel">
+        <div class="stats-group-list">
+          {{range .Rows}}
+          <article class="stats-group-row">
+            <a class="stats-group-name with-icon" href="{{$.DrillURL .Name}}">
+              <span>{{.Name}}</span>
+              <svg class="icon icon-small icon-muted" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-chevron-right"></use></svg>
+            </a>
+            <div class="stats-group-values">
+              {{range .Cells}}
+              <div class="stats-mini">
+                <span class="stats-mini__title">{{.Title}}</span>
+                <div class="mini-values {{if eq (len .Values) 1}}single-summary{{end}}">
+                  {{range .Values}}
+                  <div class="mini-value metric-{{.Key}}">
+                    <span class="mini-value-label">{{.Title}}</span>
+                    <strong aria-label="{{.Title}}: {{.Value}}">{{.Value}}</strong>
+                  </div>
+                  {{end}}
+                </div>
+                <svg class="sparkline" viewBox="0 0 120 34" preserveAspectRatio="none" role="img" aria-label="{{.Title}} trend">
+                  <line class="sparkline-baseline" x1="2" y1="31" x2="118" y2="31" vector-effect="non-scaling-stroke" />
+                  {{range .Lines}}<polyline class="metric-{{.Key}}" points="{{.Points}}" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" />{{end}}
+                </svg>
+              </div>
+              {{end}}
+            </div>
+          </article>
+          {{end}}
+        </div>
+      </div>
+      {{else}}
+      <div class="uvy-empty"><p>No matching {{if eq .Tab "workers"}}runner types{{else}}{{.Tab}}{{end}}.</p></div>
+      {{end}}
+
+      {{if gt .Pages 1}}
+      <nav class="uvy-pagination stats-pagination" aria-label="Breakdown pages">
+        <span class="uvy-count">Page {{.Page}} of {{.Pages}}</span>
+        <div class="uvy-actions">
+          {{if gt .Page 1}}
+          <a class="uvy-button uvy-button--small" href="{{.PageURL .PreviousPage}}" hx-get="{{.PageURL .PreviousPage}}" hx-target="#stats-breakdown-region" hx-swap="innerHTML show:none" hx-push-url="true">
+            <svg class="icon icon-small" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-chevron-left"></use></svg>
+            Previous
+          </a>
+          {{end}}
+          {{if lt .Page .Pages}}
+          <a class="uvy-button uvy-button--small" href="{{.PageURL .NextPage}}" hx-get="{{.PageURL .NextPage}}" hx-target="#stats-breakdown-region" hx-swap="innerHTML show:none" hx-push-url="true">
+            Next
+            <svg class="icon icon-small" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-chevron-right"></use></svg>
+          </a>
+          {{end}}
+        </div>
+      </nav>
+      {{end}}
+    </section>
+    {{end}}{{end}}
 
 {{define "worker-queued"}}<div class="worker-type{{if not .Queued}} worker-type-empty{{end}}"{{if not .Queued}} aria-hidden="true"{{end}}><span title="{{.Name}}">{{.Name}}</span><b>{{.Queued}}</b></div>{{end}}
-
 {{define "worker-running"}}<div class="worker-type{{if not .Running}} worker-type-empty{{end}}"{{if not .Running}} aria-hidden="true"{{end}}><span title="{{.Name}}">{{.Name}}</span><b>{{.Running}}</b></div>{{end}}
-
 {{define "worker-completed"}}<div class="worker-type{{if not .Completed}} worker-type-empty{{end}}"{{if not .Completed}} aria-hidden="true"{{end}}><span title="{{.Name}}">{{.Name}}</span><b>{{.Completed}}</b></div>{{end}}
-
 {{define "worker-failed"}}<div class="worker-type{{if not .Failed}} worker-type-empty{{end}}"{{if not .Failed}} aria-hidden="true"{{end}}><span title="{{.Name}}">{{.Name}}</span><b>{{.Failed}}</b></div>{{end}}
