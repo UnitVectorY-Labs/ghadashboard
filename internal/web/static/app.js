@@ -78,6 +78,94 @@ function refreshModal() {
   modalContent.replaceChildren(template.content.cloneNode(true));
   modalContent.scrollTop = previousScroll;
 }
+const narrowBoardQuery = window.matchMedia('(max-width: 55.9375rem)');
+const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+let pinFrame = 0;
+
+function syncLaneTabIndex() {
+  const narrow = narrowBoardQuery.matches;
+  document.querySelectorAll('#board .lane-label .tooltip-anchor').forEach(el => {
+    el.tabIndex = narrow ? -1 : 0;
+  });
+}
+
+function updatePinnedHeaders() {
+  pinFrame = 0;
+  const headings = [...document.querySelectorAll('#board .lane-heading')];
+  if (!headings.length) return;
+  if (!narrowBoardQuery.matches) {
+    headings.forEach(heading => {
+      delete heading.dataset.pin;
+      delete heading.dataset.state;
+      delete heading.dataset.pinEdge;
+      delete heading.dataset.scrolled;
+    });
+    return;
+  }
+  const viewportHeight = window.innerHeight;
+  const count = headings.length;
+  let lastTopIndex = -1;
+  let firstBottomIndex = -1;
+  const states = headings.map((heading, index) => {
+    const laneName = heading.dataset.lane;
+    const body = document.querySelector(`#board [data-lane-body="${CSS.escape(laneName)}"]`);
+    const h = heading.offsetHeight || 44;
+    const step = h - 1;
+    const topDock = index * step;
+    const bottomDock = viewportHeight - (count - 1 - index) * step - h;
+    const bodyRect = body ? body.getBoundingClientRect() : heading.getBoundingClientRect();
+    const naturalTop = bodyRect.top - h;
+    let pin = 'flow';
+    let state = 'flow';
+    let scrolled = false;
+    if (naturalTop <= topDock + 0.5) {
+      pin = 'top';
+      lastTopIndex = index;
+      state = bodyRect.bottom > topDock + h + 1 ? 'active' : 'passed';
+      scrolled = naturalTop < topDock - 24;
+    } else if (naturalTop >= bottomDock - 0.5) {
+      pin = 'bottom';
+      if (firstBottomIndex === -1) firstBottomIndex = index;
+      state = 'upcoming';
+    }
+    return {heading, pin, state, scrolled};
+  });
+  states.forEach(({heading, pin, state, scrolled}, index) => {
+    heading.dataset.pin = pin;
+    heading.dataset.state = state;
+    if (scrolled) heading.dataset.scrolled = 'true';
+    else delete heading.dataset.scrolled;
+    if (index === lastTopIndex) heading.dataset.pinEdge = 'top';
+    else if (index === firstBottomIndex) heading.dataset.pinEdge = 'bottom';
+    else delete heading.dataset.pinEdge;
+  });
+}
+
+function schedulePinnedUpdate() {
+  if (pinFrame) return;
+  pinFrame = requestAnimationFrame(updatePinnedHeaders);
+}
+
+function jumpToLane(laneName) {
+  const headings = [...document.querySelectorAll('#board .lane-heading')];
+  const index = headings.findIndex(heading => heading.dataset.lane === laneName);
+  if (index < 0) return;
+  const heading = headings[index];
+  const body = document.querySelector(`#board [data-lane-body="${CSS.escape(laneName)}"]`);
+  if (!body) return;
+  const h = heading.offsetHeight || 44;
+  const step = h - 1;
+  const bodyDocTop = body.getBoundingClientRect().top + window.scrollY;
+  let targetY = Math.max(0, Math.round(bodyDocTop - (index * step + h)));
+  if (index === 0 && Math.abs(window.scrollY - targetY) <= 4 && window.scrollY > 0) {
+    targetY = 0;
+  }
+  window.scrollTo({
+    top: targetY,
+    behavior: reducedMotionQuery.matches ? 'auto' : 'smooth',
+  });
+}
+
 function connect() {
   if (source) source.close();
   setStatus('Connecting', 'connecting');
@@ -94,9 +182,13 @@ function connect() {
     if (data.html !== lastHTML) {
       const scroll = [...document.querySelectorAll('.cards')].map(lane => lane.scrollTop);
       const focusedRun = document.activeElement?.dataset.run;
+      const focusedLane = document.activeElement?.dataset.laneJump;
       htmx.swap('#board', data.html, {swapStyle: 'outerHTML', settleDelay: 0});
       document.querySelectorAll('.cards').forEach((lane, index) => { lane.scrollTop = scroll[index] || 0; });
+      syncLaneTabIndex();
+      updatePinnedHeaders();
       if (focusedRun && !modal.open) document.querySelector(`[data-run="${CSS.escape(focusedRun)}"]`)?.focus({preventScroll: true});
+      else if (focusedLane && !modal.open) document.querySelector(`[data-lane-jump="${CSS.escape(focusedLane)}"]`)?.focus({preventScroll: true});
       lastHTML = data.html;
       refreshModal();
     }
@@ -113,6 +205,12 @@ repository.addEventListener('change', () => {
 });
 document.querySelector('.toolbar').addEventListener('submit', event => {event.preventDefault(); connect();});
 document.body.addEventListener('click', event => {
+  const jump = event.target.closest('[data-lane-jump]');
+  if (jump) {
+    event.preventDefault();
+    jumpToLane(jump.dataset.laneJump);
+    return;
+  }
   const card = event.target.closest('[data-run]');
   if (!card) return;
   const template = document.getElementById(card.dataset.run);
@@ -122,9 +220,14 @@ document.body.addEventListener('click', event => {
   modal.showModal();
   tick();
 });
+window.addEventListener('scroll', schedulePinnedUpdate, {passive: true});
+window.addEventListener('resize', schedulePinnedUpdate, {passive: true});
+narrowBoardQuery.addEventListener('change', () => { syncLaneTabIndex(); updatePinnedHeaders(); });
 document.getElementById('close-modal').addEventListener('click', () => modal.close());
 modal.addEventListener('click', event => { if (event.target === modal) { const rect = modal.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) modal.close(); } });
 modal.addEventListener('close', () => {document.querySelector(`[data-run="${CSS.escape(selectedRun || '')}"]`)?.focus({preventScroll:true}); selectedRun = null;});
 setInterval(tick, 1000);
 tick();
+syncLaneTabIndex();
+updatePinnedHeaders();
 connect();

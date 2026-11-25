@@ -64,6 +64,19 @@ func TestDashboardRenderingAndFiltering(t *testing.T) {
 	if !(strings.Index(body, `lane queued`) < strings.Index(body, `lane running`) && strings.Index(body, `lane running`) < strings.Index(body, `lane completed`) && strings.Index(body, `lane completed`) < strings.Index(body, `lane failed`)) {
 		t.Fatal("columns not in workflow order")
 	}
+	for _, lane := range []string{"queued", "running", "completed", "failed"} {
+		for _, attr := range []string{
+			fmt.Sprintf(`data-lane="%s"`, lane),
+			fmt.Sprintf(`data-lane-jump="%s"`, lane),
+			fmt.Sprintf(`href="#lane-%s-body"`, lane),
+			fmt.Sprintf(`id="lane-%s-body"`, lane),
+			fmt.Sprintf(`data-lane-body="%s"`, lane),
+		} {
+			if !strings.Contains(body, attr) {
+				t.Errorf("missing lane navigation attribute %s", attr)
+			}
+		}
+	}
 	if !strings.Contains(w.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'") {
 		t.Fatal("missing CSP")
 	}
