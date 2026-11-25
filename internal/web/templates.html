@@ -143,44 +143,60 @@ SOFTWARE.
 </html>{{end}}
 
 {{define "board"}}<main id="board" class="board" data-updated="{{iso .Snapshot.UpdatedAt}}">
-  <section class="lane queued">
-    <div class="lane-heading">
+  <section class="lane queued" data-lane="queued">
+    <div class="lane-heading" data-lane="queued">
       <div class="lane-label"><i aria-hidden="true"></i><h2>Queued</h2></div>
       <div class="count">{{.Snapshot.QueuedJobs}} <span>jobs</span></div>
-      <div class="worker-types">{{range .Snapshot.WorkerTypes}}{{template "worker-queued" .}}{{end}}</div>
+      <svg class="icon icon-small lane-pin-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-chevron-down"></use></svg>
+      <a class="lane-jump" href="#lane-queued-body" data-lane-jump="queued" aria-label="Scroll to Queued"></a>
     </div>
-    <div class="cards">
-      {{range .Queued}}{{template "card" .}}{{else}}{{if .Snapshot.QueuedJobs}}<p class="empty">{{.Snapshot.QueuedJobs}} queued jobs belong to running workflows.</p>{{else}}<p class="empty">Queue empty</p>{{end}}{{end}}
+    <div class="lane-body" id="lane-queued-body" data-lane-body="queued">
+      <div class="worker-types">{{range .Snapshot.WorkerTypes}}{{template "worker-queued" .}}{{end}}</div>
+      <div class="cards">
+        {{range .Queued}}{{template "card" .}}{{else}}{{if .Snapshot.QueuedJobs}}<p class="empty">{{.Snapshot.QueuedJobs}} queued jobs belong to running workflows.</p>{{else}}<p class="empty">Queue empty</p>{{end}}{{end}}
+      </div>
     </div>
   </section>
-  <section class="lane running">
-    <div class="lane-heading">
+  <section class="lane running" data-lane="running">
+    <div class="lane-heading" data-lane="running">
       <div class="lane-label"><i aria-hidden="true"></i><h2>Running</h2></div>
       <div class="count">{{.Snapshot.RunningJobs}} <span>jobs</span></div>
-      <div class="worker-types">{{range .Snapshot.WorkerTypes}}{{template "worker-running" .}}{{end}}</div>
+      <svg class="icon icon-small lane-pin-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-chevron-down"></use></svg>
+      <a class="lane-jump" href="#lane-running-body" data-lane-jump="running" aria-label="Scroll to Running"></a>
     </div>
-    <div class="cards">
-      {{range .Running}}{{template "card" .}}{{else}}<p class="empty">Nothing running</p>{{end}}
+    <div class="lane-body" id="lane-running-body" data-lane-body="running">
+      <div class="worker-types">{{range .Snapshot.WorkerTypes}}{{template "worker-running" .}}{{end}}</div>
+      <div class="cards">
+        {{range .Running}}{{template "card" .}}{{else}}<p class="empty">Nothing running</p>{{end}}
+      </div>
     </div>
   </section>
-  <section class="lane completed">
-    <div class="lane-heading">
+  <section class="lane completed" data-lane="completed">
+    <div class="lane-heading" data-lane="completed">
       <div class="lane-label"><i aria-hidden="true"></i><h2 class="tooltip-anchor" tabindex="0" aria-describedby="completed-window">Completed<span class="tooltip" id="completed-window" role="tooltip">Completed workflows from the last 10 minutes</span></h2></div>
       <div class="count">{{.Snapshot.Completed}} <span>workflows</span></div>
-      <div class="worker-types">{{range .Snapshot.WorkerTypes}}{{template "worker-completed" .}}{{end}}</div>
+      <svg class="icon icon-small lane-pin-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-chevron-down"></use></svg>
+      <a class="lane-jump" href="#lane-completed-body" data-lane-jump="completed" aria-label="Scroll to Completed"></a>
     </div>
-    <div class="cards">
-      {{range .Completed}}{{template "card" .}}{{else}}<p class="empty">No recent completions</p>{{end}}
+    <div class="lane-body" id="lane-completed-body" data-lane-body="completed">
+      <div class="worker-types">{{range .Snapshot.WorkerTypes}}{{template "worker-completed" .}}{{end}}</div>
+      <div class="cards">
+        {{range .Completed}}{{template "card" .}}{{else}}<p class="empty">No recent completions</p>{{end}}
+      </div>
     </div>
   </section>
-  <section class="lane failed">
-    <div class="lane-heading">
+  <section class="lane failed" data-lane="failed">
+    <div class="lane-heading" data-lane="failed">
       <div class="lane-label"><i aria-hidden="true"></i><h2 class="tooltip-anchor" tabindex="0" aria-describedby="failed-window">Failed<span class="tooltip" id="failed-window" role="tooltip">Failed workflows from the last 24 hours</span></h2></div>
       <div class="count">{{.Snapshot.Failed}} <span>workflows</span></div>
-      <div class="worker-types">{{range .Snapshot.WorkerTypes}}{{template "worker-failed" .}}{{end}}</div>
+      <svg class="icon icon-small lane-pin-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-chevron-down"></use></svg>
+      <a class="lane-jump" href="#lane-failed-body" data-lane-jump="failed" aria-label="Scroll to Failed"></a>
     </div>
-    <div class="cards">
-      {{range .Failed}}{{template "card" .}}{{else}}<p class="empty">No recent failures</p>{{end}}
+    <div class="lane-body" id="lane-failed-body" data-lane-body="failed">
+      <div class="worker-types">{{range .Snapshot.WorkerTypes}}{{template "worker-failed" .}}{{end}}</div>
+      <div class="cards">
+        {{range .Failed}}{{template "card" .}}{{else}}<p class="empty">No recent failures</p>{{end}}
+      </div>
     </div>
   </section>
   {{if not .Snapshot.LastEventAt}}<p class="coverage uvy-hint">Waiting for the first webhook event.</p>{{end}}
